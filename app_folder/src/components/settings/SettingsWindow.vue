@@ -456,7 +456,7 @@ const freeCount = computed(() => models.value.filter((m) => m.free).length);
               <img src="/Image.svg" alt="" width="36" height="36" class="about-logo" />
               <div>
                 <div class="about-title">
-                  RAKZ <span class="font-mono-meta about-ver">v0.1.0</span>
+                  RAKZ <span class="font-mono-meta about-ver">v0.2.0</span>
                 </div>
                 <div class="about-sub">
                   Local-first mnemonic vault · {{ isDesktop ? "Tauri 2 Desktop (Windows/Linux/macOS)" : "Browser Session" }}

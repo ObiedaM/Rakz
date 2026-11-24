@@ -1,0 +1,195 @@
+name: Release & Packages
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v0.2.0)"
+        required: true
+        default: "v0.2.0"
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  release-windows:
+    name: Build & Publish Windows 11 Release
+    runs-on: windows-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Resolve release tag
+        id: meta
+        shell: pwsh
+        run: |
+          $tag = if ("${{ github.event_name }}" -eq "workflow_dispatch") { "${{ inputs.tag }}" } else { "${{ github.ref_name }}" }
+          $ver = $tag -replace '^v', ''
+          "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "version=$ver" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app_folder/package-lock.json
+
+      - name: Setup Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app_folder/src-tauri -> target
+
+      - name: Install frontend dependencies
+        working-directory: app_folder
+        run: npm ci
+
+      - name: Verify lint, frontend tests, and Rust IO tests
+        shell: pwsh
+        run: |
+          Push-Location app_folder
+          npm run lint
+          npm test
+          Pop-Location
+          cargo test --manifest-path io_folder/Cargo.toml
+
+      - name: Build Windows 11 binary & installers (NSIS + MSI)
+        working-directory: app_folder
+        run: npm run tauri build -- --bundles nsis,msi
+
+      - name: Stage release artifacts & SHA-256 checksums
+        shell: pwsh
+        run: |
+          $out = "release-assets"
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+
+          $exe = "app_folder\src-tauri\target\release\rakz.exe"
+          $nsis = Get-ChildItem "app_folder\src-tauri\target\release\bundle\nsis\*-setup.exe" | Select-Object -First 1
+          $msi = Get-ChildItem "app_folder\src-tauri\target\release\bundle\msi\*.msi" | Select-Object -First 1
+
+          Copy-Item $exe "$out\rakz.exe" -Force
+          Copy-Item $nsis.FullName "$out\$($nsis.Name)" -Force
+          Copy-Item $msi.FullName "$out\$($msi.Name)" -Force
+
+          $sums = Get-ChildItem $out -File | Sort-Object Name | ForEach-Object {
+            $h = (Get-FileHash -Algorithm SHA256 $_.FullName).Hash.ToLower()
+            "$h  $($_.Name)"
+          }
+          [System.IO.File]::WriteAllLines("$out\SHA256SUMS.txt", $sums)
+          Get-Content "$out\SHA256SUMS.txt"
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: "RAKZ ${{ steps.meta.outputs.tag }} — Windows 11 Release"
+          make_latest: true
+          files: |
+            release-assets/rakz.exe
+            release-assets/*-setup.exe
+            release-assets/*.msi
+            release-assets/SHA256SUMS.txt
+          body: |
+            ## RAKZ ${{ steps.meta.outputs.tag }} — Local-First Mnemonic Vault
+
+            Built cleanly on `windows-latest` from verified source (`vue-tsc`, ESLint, Vitest 23/23, Rust IO 6/6).
+
+            ### Windows 11 Downloads
+            - **`RAKZ_${{ steps.meta.outputs.version }}_x64-setup.exe`** — Recommended per-user NSIS installer (no admin required, embeds WebView2 bootstrapper, registers `.mns` file association).
+            - **`RAKZ_${{ steps.meta.outputs.version }}_x64_en-US.msi`** — Standard Windows MSI installer.
+            - **`rakz.exe`** — Standalone portable Windows 11 executable (`PerMonitorV2` DPI, `longPathAware`, UTF-8 manifest).
+            - **`SHA256SUMS.txt`** — SHA-256 verification checksums for all artifacts.
+
+            ### Highlights
+            - **Native Windows 11 Compatibility:** Dedicated `rakz.exe` executable + Windows 10/11 compatibility manifest (`PerMonitorV2`, `longPathAware`, UTF-8) + Defender/Indexer-safe atomic saves + NTFS case-safe file grouping.
+            - **Sustained Learning Studio:** 3 learning depth layers (`L1` Condensed Hook → `L2` Core Explanation → `L3` Deep Roots & First Principles), 3-stage graduated active recall (cold recall → hint → side-by-side reveal), SM-2/FSRS-inspired local spaced repetition, 14-day spacing cadence, and **Islands → Bridges** mastery diagnostics.
+            - **Bilingual Arabic (RTL) + English (LTR):** Native `dir="auto"` support across inputs, cards, recall attempts, tree explorer, and Co-Pilot.
+            - **Dual Native Themes:** Precision Dark + Warm Paper & Ink Light synced to native Windows 11 titlebars.
+            - **Security-First Hardening:** Strict Content Security Policy, sandboxed IO with text-only opener allowlist, HTTPS-only OpenRouter requests, and OS keychain secret isolation.
+
+            ### Verify Download Integrity (PowerShell)
+            ```powershell
+            Get-FileHash .\RAKZ_${{ steps.meta.outputs.version }}_x64-setup.exe -Algorithm SHA256
+            ```
+
+  publish-engine-package:
+    name: Publish @obiedam/rakz-engine to GitHub Packages
+    runs-on: ubuntu-latest
+    needs: release-windows
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js for GitHub Packages
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: "https://npm.pkg.github.com"
+
+      - name: Stage, compile, and publish scoped engine package
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO_OWNER: ${{ github.repository_owner }}
+          REPO_FULL: ${{ github.repository }}
+          REF_NAME: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          VERSION="${REF_NAME#v}"
+          OWNER_LOWER="$(echo "$REPO_OWNER" | tr '[:upper:]' '[:lower:]')"
+          STAGE="$(mktemp -d)"
+
+          cp -R engine_folder/. "$STAGE/"
+          cd "$STAGE"
+          npm ci --ignore-scripts
+
+          cat > tsconfig.build.json << 'EOF'
+          {
+            "compilerOptions": {
+              "target": "ES2022",
+              "module": "ESNext",
+              "moduleResolution": "Bundler",
+              "declaration": true,
+              "outDir": "./dist",
+              "rootDir": "./src",
+              "strict": true,
+              "skipLibCheck": true,
+              "esModuleInterop": true
+            },
+            "include": ["src/**/*.ts"]
+          }
+          EOF
+
+          npx --yes typescript@5.8.3 -p tsconfig.build.json
+
+          node -e "
+            const fs = require('fs');
+            const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+            pkg.name = '@${OWNER_LOWER}/rakz-engine';
+            pkg.version = '${VERSION}';
+            pkg.private = false;
+            pkg.license = 'GPL-3.0-or-later';
+            pkg.repository = { type: 'git', url: 'https://github.com/${REPO_FULL}.git' };
+            pkg.publishConfig = { registry: 'https://npm.pkg.github.com' };
+            pkg.main = './dist/index.js';
+            pkg.types = './dist/index.d.ts';
+            pkg.exports = { '.': { types: './dist/index.d.ts', import: './dist/index.js' } };
+            pkg.files = ['dist', 'src'];
+            delete pkg.devDependencies;
+            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
+          "
+
+          npm publish --access public

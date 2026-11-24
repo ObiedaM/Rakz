@@ -53,7 +53,7 @@ function createSubject(): void {
       <div class="brand-row">
         <img src="/Image.svg" alt="" class="brand-logo" width="22" height="22" />
         <span class="brand-name">RAKZ</span>
-        <span class="brand-ver font-mono-meta">v0.1</span>
+        <span class="brand-ver font-mono-meta">v0.2</span>
       </div>
 
       <div class="action-row">

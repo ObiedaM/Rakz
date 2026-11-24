@@ -1,6 +1,6 @@
 [package]
 name = "rakz"
-version = "0.1.0"
+version = "0.2.0"
 description = "RAKZ — Local-first mnemonic lifecycle vault"
 authors = ["RAKZ Team"]
 license = ""
