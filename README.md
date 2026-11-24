@@ -10,6 +10,9 @@
     <a href="https://github.com/ObiedaM/Rakz/actions/workflows/ci.yml">
       <img src="https://img.shields.io/github/actions/workflow/status/ObiedaM/Rakz/ci.yml?branch=main&label=CI&style=flat-square" alt="CI Status" />
     </a>
+    <a href="https://github.com/ObiedaM/Rakz/actions/workflows/packages.yml">
+      <img src="https://img.shields.io/github/actions/workflow/status/ObiedaM/Rakz/packages.yml?branch=main&label=Packages&style=flat-square" alt="Packages Status" />
+    </a>
     <a href="https://github.com/ObiedaM/Rakz/actions/workflows/release.yml">
       <img src="https://img.shields.io/github/actions/workflow/status/ObiedaM/Rakz/release.yml?label=Release&style=flat-square" alt="Release Build" />
     </a>
