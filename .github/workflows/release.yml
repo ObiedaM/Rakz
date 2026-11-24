@@ -139,6 +139,7 @@ jobs:
         with:
           node-version: 22
           registry-url: "https://npm.pkg.github.com"
+          scope: "@obiedam"
 
       - name: Stage, compile, and publish scoped engine package
         env:
@@ -150,11 +151,16 @@ jobs:
           set -euo pipefail
           VERSION="${REF_NAME#v}"
           OWNER_LOWER="$(echo "$REPO_OWNER" | tr '[:upper:]' '[:lower:]')"
-          STAGE="$(mktemp -d)"
+          PKG_NAME="@${OWNER_LOWER}/rakz-engine"
+          if npm view "${PKG_NAME}@${VERSION}" version --registry=https://npm.pkg.github.com >/dev/null 2>&1; then
+            echo "${PKG_NAME}@${VERSION} is already published — skipping."
+            exit 0
+          fi
 
+          STAGE="$(mktemp -d)"
           cp -R engine_folder/. "$STAGE/"
           cd "$STAGE"
-          npm ci --ignore-scripts
+          npm ci --ignore-scripts --registry=https://registry.npmjs.org
 
           cat > tsconfig.build.json << 'EOF'
           {
@@ -173,12 +179,12 @@ jobs:
           }
           EOF
 
-          npx --yes typescript@5.8.3 -p tsconfig.build.json
+          npx --yes --registry=https://registry.npmjs.org typescript@5.8.3 -p tsconfig.build.json
 
           node -e "
             const fs = require('fs');
             const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-            pkg.name = '@${OWNER_LOWER}/rakz-engine';
+            pkg.name = '${PKG_NAME}';
             pkg.version = '${VERSION}';
             pkg.private = false;
             pkg.license = 'GPL-3.0-or-later';
@@ -192,4 +198,4 @@ jobs:
             fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
           "
 
-          npm publish --access public
+          npm publish --registry=https://npm.pkg.github.com

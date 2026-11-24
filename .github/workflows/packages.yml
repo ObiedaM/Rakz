@@ -1,0 +1,88 @@
+name: Packages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/packages.yml"
+      - "engine_folder/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish-engine-package:
+    name: Publish @obiedam/rakz-engine
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js for GitHub Packages
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: "https://npm.pkg.github.com"
+          scope: "@obiedam"
+
+      - name: Stage, compile, and publish @obiedam/rakz-engine
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO_OWNER: ${{ github.repository_owner }}
+          REPO_FULL: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p "require('./app_folder/package.json').version")"
+          OWNER_LOWER="$(echo "$REPO_OWNER" | tr '[:upper:]' '[:lower:]')"
+          PKG_NAME="@${OWNER_LOWER}/rakz-engine"
+
+          if npm view "${PKG_NAME}@${VERSION}" version --registry=https://npm.pkg.github.com >/dev/null 2>&1; then
+            echo "${PKG_NAME}@${VERSION} is already published — skipping."
+            exit 0
+          fi
+
+          STAGE="$(mktemp -d)"
+          cp -R engine_folder/. "$STAGE/"
+          cd "$STAGE"
+          npm ci --ignore-scripts --registry=https://registry.npmjs.org
+
+          cat > tsconfig.build.json << 'EOF'
+          {
+            "compilerOptions": {
+              "target": "ES2022",
+              "module": "ESNext",
+              "moduleResolution": "Bundler",
+              "declaration": true,
+              "outDir": "./dist",
+              "rootDir": "./src",
+              "strict": true,
+              "skipLibCheck": true,
+              "esModuleInterop": true
+            },
+            "include": ["src/**/*.ts"]
+          }
+          EOF
+
+          npx --yes --registry=https://registry.npmjs.org typescript@5.8.3 -p tsconfig.build.json
+
+          node -e "
+            const fs = require('fs');
+            const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+            pkg.name = '${PKG_NAME}';
+            pkg.version = '${VERSION}';
+            pkg.private = false;
+            pkg.license = 'GPL-3.0-or-later';
+            pkg.repository = { type: 'git', url: 'https://github.com/${REPO_FULL}.git' };
+            pkg.publishConfig = { registry: 'https://npm.pkg.github.com' };
+            pkg.main = './dist/index.js';
+            pkg.types = './dist/index.d.ts';
+            pkg.exports = { '.': { types: './dist/index.d.ts', import: './dist/index.js' } };
+            pkg.files = ['dist', 'src'];
+            delete pkg.devDependencies;
+            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
+          "
+
+          npm publish --registry=https://npm.pkg.github.com
