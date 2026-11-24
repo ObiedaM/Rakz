@@ -7,33 +7,24 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag (e.g. v0.2.0)"
+        description: "Release tag (e.g. v0.2.1)"
         required: true
-        default: "v0.2.0"
+        default: "v0.2.1"
 
 permissions:
   contents: write
   packages: write
 
 jobs:
-  release-windows:
-    name: Build & Publish Windows 11 Release
+  build-windows:
+    name: Build Windows 11 (x64)
     runs-on: windows-latest
     permissions:
-      contents: write
+      contents: read
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Resolve release tag
-        id: meta
-        shell: pwsh
-        run: |
-          $tag = if ("${{ github.event_name }}" -eq "workflow_dispatch") { "${{ inputs.tag }}" } else { "${{ github.ref_name }}" }
-          $ver = $tag -replace '^v', ''
-          "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          "version=$ver" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -50,14 +41,11 @@ jobs:
         with:
           workspaces: app_folder/src-tauri -> target
 
-      - name: Install frontend dependencies
-        working-directory: app_folder
-        run: npm ci
-
-      - name: Verify lint, frontend tests, and Rust IO tests
+      - name: Install frontend dependencies & verify tests
         shell: pwsh
         run: |
           Push-Location app_folder
+          npm ci
           npm run lint
           npm test
           Pop-Location
@@ -67,65 +55,222 @@ jobs:
         working-directory: app_folder
         run: npm run tauri build -- --bundles nsis,msi
 
-      - name: Stage release artifacts & SHA-256 checksums
+      - name: Stage Windows artifacts
         shell: pwsh
         run: |
-          $out = "release-assets"
+          $out = "dist-windows"
           New-Item -ItemType Directory -Force -Path $out | Out-Null
+          Copy-Item "app_folder\src-tauri\target\release\rakz.exe" "$out\rakz.exe" -Force
+          Get-ChildItem "app_folder\src-tauri\target\release\bundle\nsis\*-setup.exe" | ForEach-Object { Copy-Item $_.FullName "$out\$($_.Name)" -Force }
+          Get-ChildItem "app_folder\src-tauri\target\release\bundle\msi\*.msi" | ForEach-Object { Copy-Item $_.FullName "$out\$($_.Name)" -Force }
+          Get-ChildItem $out
 
-          $exe = "app_folder\src-tauri\target\release\rakz.exe"
-          $nsis = Get-ChildItem "app_folder\src-tauri\target\release\bundle\nsis\*-setup.exe" | Select-Object -First 1
-          $msi = Get-ChildItem "app_folder\src-tauri\target\release\bundle\msi\*.msi" | Select-Object -First 1
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-windows
+          path: dist-windows/*
 
-          Copy-Item $exe "$out\rakz.exe" -Force
-          Copy-Item $nsis.FullName "$out\$($nsis.Name)" -Force
-          Copy-Item $msi.FullName "$out\$($msi.Name)" -Force
+  build-macos:
+    name: Build macOS (Universal — Apple Silicon & Intel)
+    runs-on: macos-14
+    permissions:
+      contents: read
 
-          $sums = Get-ChildItem $out -File | Sort-Object Name | ForEach-Object {
-            $h = (Get-FileHash -Algorithm SHA256 $_.FullName).Hash.ToLower()
-            "$h  $($_.Name)"
-          }
-          [System.IO.File]::WriteAllLines("$out\SHA256SUMS.txt", $sums)
-          Get-Content "$out\SHA256SUMS.txt"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app_folder/package-lock.json
+
+      - name: Setup Rust stable (Apple Silicon + Intel targets)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app_folder/src-tauri -> target
+
+      - name: Install frontend dependencies & verify tests
+        run: |
+          cd app_folder
+          npm ci
+          npm run lint
+          npm test
+          cd ..
+          cargo test --manifest-path io_folder/Cargo.toml
+
+      - name: Build Universal macOS app & DMG
+        working-directory: app_folder
+        env:
+          CI: "true"
+        run: npm run tauri build -- --target universal-apple-darwin --bundles dmg,app
+
+      - name: Stage macOS artifacts
+        run: |
+          mkdir -p dist-macos
+          cp app_folder/src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg dist-macos/
+          ls -lh dist-macos/
+
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-macos
+          path: dist-macos/*
+
+  build-linux:
+    name: Build Linux (AppImage, deb, rpm)
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Linux Tauri system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libdbus-1-dev \
+            rpm \
+            patchelf
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app_folder/package-lock.json
+
+      - name: Setup Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app_folder/src-tauri -> target
+
+      - name: Install frontend dependencies & verify tests
+        run: |
+          cd app_folder
+          npm ci
+          npm run lint
+          npm test
+          cd ..
+          cargo test --manifest-path io_folder/Cargo.toml
+
+      - name: Build Linux packages (AppImage, deb, rpm)
+        working-directory: app_folder
+        env:
+          NO_STRIP: "true"
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: npm run tauri build -- --bundles deb,rpm,appimage
+
+      - name: Stage Linux artifacts
+        run: |
+          mkdir -p dist-linux
+          cp app_folder/src-tauri/target/release/bundle/appimage/*.AppImage dist-linux/
+          cp app_folder/src-tauri/target/release/bundle/deb/*.deb dist-linux/
+          cp app_folder/src-tauri/target/release/bundle/rpm/*.rpm dist-linux/
+          ls -lh dist-linux/
+
+      - name: Upload Linux artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-linux
+          path: dist-linux/*
+
+  publish-release:
+    name: Publish Cross-Platform GitHub Release
+    runs-on: ubuntu-latest
+    needs: [build-windows, build-macos, build-linux]
+    permissions:
+      contents: write
+
+    steps:
+      - name: Resolve release metadata
+        id: meta
+        run: |
+          TAG="${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}"
+          VER="${TAG#v}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${VER}" >> "$GITHUB_OUTPUT"
+
+      - name: Download all OS release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Generate unified SHA-256 checksums
+        run: |
+          cd release-assets
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.meta.outputs.tag }}
-          name: "RAKZ ${{ steps.meta.outputs.tag }} — Windows 11 Release"
+          name: "RAKZ ${{ steps.meta.outputs.tag }} — Windows 11, macOS & Linux"
           make_latest: true
-          files: |
-            release-assets/rakz.exe
-            release-assets/*-setup.exe
-            release-assets/*.msi
-            release-assets/SHA256SUMS.txt
+          files: release-assets/*
           body: |
-            ## RAKZ ${{ steps.meta.outputs.tag }} — Local-First Mnemonic Vault
+            ## RAKZ ${{ steps.meta.outputs.tag }} — Cross-Platform Desktop Release
 
-            Built cleanly on `windows-latest` from verified source (`vue-tsc`, ESLint, Vitest 23/23, Rust IO 6/6).
+            Built cleanly on GitHub Actions (`windows-latest`, `macos-14` universal, `ubuntu-22.04`) with all frontend (`vue-tsc`, ESLint, Vitest 23/23) and Rust IO sandbox tests passing on all three platforms.
 
-            ### Windows 11 Downloads
+            ### Downloads
+
+            #### Windows 11 (x64)
             - **`RAKZ_${{ steps.meta.outputs.version }}_x64-setup.exe`** — Recommended per-user NSIS installer (no admin required, embeds WebView2 bootstrapper, registers `.mns` file association).
             - **`RAKZ_${{ steps.meta.outputs.version }}_x64_en-US.msi`** — Standard Windows MSI installer.
             - **`rakz.exe`** — Standalone portable Windows 11 executable (`PerMonitorV2` DPI, `longPathAware`, UTF-8 manifest).
-            - **`SHA256SUMS.txt`** — SHA-256 verification checksums for all artifacts.
 
-            ### Highlights
-            - **Native Windows 11 Compatibility:** Dedicated `rakz.exe` executable + Windows 10/11 compatibility manifest (`PerMonitorV2`, `longPathAware`, UTF-8) + Defender/Indexer-safe atomic saves + NTFS case-safe file grouping.
-            - **Sustained Learning Studio:** 3 learning depth layers (`L1` Condensed Hook → `L2` Core Explanation → `L3` Deep Roots & First Principles), 3-stage graduated active recall (cold recall → hint → side-by-side reveal), SM-2/FSRS-inspired local spaced repetition, 14-day spacing cadence, and **Islands → Bridges** mastery diagnostics.
-            - **Bilingual Arabic (RTL) + English (LTR):** Native `dir="auto"` support across inputs, cards, recall attempts, tree explorer, and Co-Pilot.
-            - **Dual Native Themes:** Precision Dark + Warm Paper & Ink Light synced to native Windows 11 titlebars.
-            - **Security-First Hardening:** Strict Content Security Policy, sandboxed IO with text-only opener allowlist, HTTPS-only OpenRouter requests, and OS keychain secret isolation.
+            #### macOS (Apple Silicon & Intel — macOS 11+)
+            - **`RAKZ_${{ steps.meta.outputs.version }}_universal.dmg`** — Universal binary (native Apple Silicon M1–M4 + Intel x86_64). Drag `RAKZ.app` to Applications.
+            - *Unsigned open-source app note:* On first launch, if macOS Gatekeeper warns the app is from an unidentified developer, run once in Terminal:
+              ```bash
+              xattr -cr /Applications/RAKZ.app
+              ```
 
-            ### Verify Download Integrity (PowerShell)
+            #### Linux (x86_64)
+            - **`RAKZ_${{ steps.meta.outputs.version }}_amd64.AppImage`** — Universal portable Linux binary (`chmod +x RAKZ_*.AppImage && ./RAKZ_*.AppImage`).
+            - **`RAKZ_${{ steps.meta.outputs.version }}_amd64.deb`** — Debian / Ubuntu / Mint / Pop!_OS (`sudo apt install ./RAKZ_*.deb`).
+            - **`RAKZ-${{ steps.meta.outputs.version }}-1.x86_64.rpm`** — Fedora / RHEL / openSUSE (`sudo dnf install ./RAKZ-*.rpm`).
+
+            ### Verify Integrity
+            Compare your download against **`SHA256SUMS.txt`**:
+            ```bash
+            # macOS / Linux
+            shasum -a 256 -c SHA256SUMS.txt --ignore-missing
+            ```
             ```powershell
+            # Windows PowerShell
             Get-FileHash .\RAKZ_${{ steps.meta.outputs.version }}_x64-setup.exe -Algorithm SHA256
             ```
 
   publish-engine-package:
     name: Publish @obiedam/rakz-engine to GitHub Packages
     runs-on: ubuntu-latest
-    needs: release-windows
+    needs: publish-release
     permissions:
       contents: read
       packages: write

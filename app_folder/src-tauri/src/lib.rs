@@ -3,13 +3,34 @@ use std::io::Write;
 use std::path::PathBuf;
 use tauri::Manager;
 
-fn install_panic_logger() {
-  let prev = std::panic::take_hook();
-  std::panic::set_hook(Box::new(move |info| {
-    let log_dir = std::env::var_os("LOCALAPPDATA")
+fn crash_log_dir() -> PathBuf {
+  #[cfg(target_os = "windows")]
+  {
+    return std::env::var_os("LOCALAPPDATA")
       .map(PathBuf::from)
       .unwrap_or_else(std::env::temp_dir)
       .join("com.rakz.app");
+  }
+  #[cfg(target_os = "macos")]
+  {
+    return std::env::var_os("HOME")
+      .map(|h| PathBuf::from(h).join("Library/Logs/com.rakz.app"))
+      .unwrap_or_else(|| std::env::temp_dir().join("com.rakz.app"));
+  }
+  #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+  {
+    return std::env::var_os("XDG_STATE_HOME")
+      .map(PathBuf::from)
+      .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/state")))
+      .unwrap_or_else(std::env::temp_dir)
+      .join("com.rakz.app");
+  }
+}
+
+fn install_panic_logger() {
+  let prev = std::panic::take_hook();
+  std::panic::set_hook(Box::new(move |info| {
+    let log_dir = crash_log_dir();
     if std::fs::create_dir_all(&log_dir).is_ok() {
       if let Ok(mut f) = OpenOptions::new()
         .create(true)

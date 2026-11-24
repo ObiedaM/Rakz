@@ -2,7 +2,7 @@
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "RAKZ",
   "mainBinaryName": "rakz",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "identifier": "com.rakz.app",
   "build": {
     "frontendDist": "../dist",
@@ -26,12 +26,15 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: asset: https://asset.localhost; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost https://openrouter.ai; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
+      "csp": "default-src 'self' tauri:; script-src 'self' tauri:; style-src 'self' 'unsafe-inline' tauri:; img-src 'self' data: asset: http://asset.localhost https://asset.localhost tauri:; font-src 'self' data: tauri:; connect-src 'self' ipc: http://ipc.localhost tauri: https://openrouter.ai; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
     }
   },
   "bundle": {
     "active": true,
     "targets": "all",
+    "category": "Education",
+    "shortDescription": "Local-first mnemonic vault and sustained learning studio",
+    "longDescription": "RAKZ transforms isolated memory aids into an interconnected, plain-text (.mns) knowledge graph with graduated active recall, spaced repetition, and cross-subject bridges.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -48,6 +51,14 @@
         "role": "Editor"
       }
     ],
+    "macOS": {
+      "minimumSystemVersion": "11.0"
+    },
+    "linux": {
+      "appimage": {
+        "bundleMediaFramework": false
+      }
+    },
     "windows": {
       "webviewInstallMode": {
         "type": "embedBootstrapper"

@@ -4,26 +4,25 @@
   <p><strong>Full mnemonic lifecycle management — local-first, offline-ready, and built for sustained learning.</strong></p>
 
   <p>
-    <a href="https://github.com/ObiedaM/Rakz/releases/latest">
-      <img src="https://img.shields.io/github/v/release/ObiedaM/Rakz?label=Download&color=3358D4&style=flat-square" alt="Latest Release" />
-    </a>
     <a href="https://github.com/ObiedaM/Rakz/actions/workflows/ci.yml">
-      <img src="https://img.shields.io/github/actions/workflow/status/ObiedaM/Rakz/ci.yml?branch=main&label=CI&style=flat-square" alt="CI Status" />
+      <img src="https://github.com/ObiedaM/Rakz/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI" />
     </a>
     <a href="https://github.com/ObiedaM/Rakz/actions/workflows/packages.yml">
-      <img src="https://img.shields.io/github/actions/workflow/status/ObiedaM/Rakz/packages.yml?branch=main&label=Packages&style=flat-square" alt="Packages Status" />
+      <img src="https://github.com/ObiedaM/Rakz/actions/workflows/packages.yml/badge.svg" alt="Packages" />
     </a>
     <a href="https://github.com/ObiedaM/Rakz/actions/workflows/release.yml">
-      <img src="https://img.shields.io/github/actions/workflow/status/ObiedaM/Rakz/release.yml?label=Release&style=flat-square" alt="Release Build" />
+      <img src="https://github.com/ObiedaM/Rakz/actions/workflows/release.yml/badge.svg" alt="Release & Packages" />
+    </a>
+    <a href="https://github.com/ObiedaM/Rakz/releases/latest">
+      <img src="https://img.shields.io/github/v/release/ObiedaM/Rakz?label=Latest&color=3358D4" alt="Latest Release" />
     </a>
     <a href="LICENSE">
-      <img src="https://img.shields.io/github/license/ObiedaM/Rakz?style=flat-square&color=2F9E68" alt="GPL-3.0 License" />
+      <img src="https://img.shields.io/badge/License-GPL--3.0-2F9E68" alt="GPL-3.0 License" />
     </a>
-    <img src="https://img.shields.io/badge/Platform-Windows%2011%20%7C%20Linux%20%7C%20macOS-555?style=flat-square" alt="Platforms" />
   </p>
 
   <p>
-    <a href="https://github.com/ObiedaM/Rakz/releases/latest"><strong>Download for Windows 11</strong></a>
+    <a href="https://github.com/ObiedaM/Rakz/releases/latest"><strong>Download (Windows · macOS · Linux)</strong></a>
     &nbsp;·&nbsp;
     <a href="#why-rakz">Why RAKZ</a>
     &nbsp;·&nbsp;
@@ -57,22 +56,24 @@
 
 ---
 
-## Download (Windows 11)
+## Download (Windows 11 · macOS · Linux)
 
-Prebuilt, checksum-verified Windows 11 (x64) packages are published automatically via GitHub Actions on every release:
+Prebuilt, checksum-verified installers for **Windows 11**, **macOS (Apple Silicon & Intel)**, and **Linux** are built automatically on GitHub Actions for every release:
 
-| Artifact | Description | Download |
-| --- | --- | --- |
-| **NSIS Installer** *(recommended)* | Per-user install (no admin required), embedded WebView2 bootstrapper, `.mns` file association | [Latest `*-setup.exe`](https://github.com/ObiedaM/Rakz/releases/latest) |
-| **MSI Installer** | Standard Windows Installer package | [Latest `*.msi`](https://github.com/ObiedaM/Rakz/releases/latest) |
-| **Portable Executable** | Standalone `rakz.exe` with Windows 10/11 `PerMonitorV2`, `longPathAware`, and UTF-8 manifest | [Latest `rakz.exe`](https://github.com/ObiedaM/Rakz/releases/latest) |
-| **Checksums** | SHA-256 hashes for verifying download integrity | [Latest `SHA256SUMS.txt`](https://github.com/ObiedaM/Rakz/releases/latest) |
+| Platform | Package | Install / Run | Download |
+| --- | --- | --- | --- |
+| **Windows 11** *(x64)* | **NSIS Installer** *(recommended)* | Run `*-setup.exe` (per-user, no admin required, embeds WebView2) | [Latest Release](https://github.com/ObiedaM/Rakz/releases/latest) |
+| **Windows 11** *(x64)* | **MSI Installer** / **Portable `.exe`** | Run `*.msi` or launch standalone `rakz.exe` directly | [Latest Release](https://github.com/ObiedaM/Rakz/releases/latest) |
+| **macOS 11+** *(Universal)* | **Universal `.dmg`** *(M1–M4 + Intel)* | Open `.dmg` → drag `RAKZ.app` to Applications | [Latest Release](https://github.com/ObiedaM/Rakz/releases/latest) |
+| **Linux** *(x86_64)* | **`.AppImage`** *(portable)* | `chmod +x RAKZ_*.AppImage && ./RAKZ_*.AppImage` | [Latest Release](https://github.com/ObiedaM/Rakz/releases/latest) |
+| **Linux** *(Debian / Ubuntu)* | **`.deb`** | `sudo apt install ./RAKZ_*_amd64.deb` | [Latest Release](https://github.com/ObiedaM/Rakz/releases/latest) |
+| **Linux** *(Fedora / RHEL / openSUSE)* | **`.rpm`** | `sudo dnf install ./RAKZ-*.x86_64.rpm` | [Latest Release](https://github.com/ObiedaM/Rakz/releases/latest) |
+| **All Platforms** | **`SHA256SUMS.txt`** | Verify download integrity with SHA-256 | [Latest Release](https://github.com/ObiedaM/Rakz/releases/latest) |
 
-Verify any download in PowerShell:
-
-```powershell
-Get-FileHash .\RAKZ_0.2.0_x64-setup.exe -Algorithm SHA256
-```
+> **macOS first-launch note:** Because RAKZ is a community open-source release without a paid Apple Developer notarization certificate, macOS Gatekeeper may warn on first open. Clear the quarantine flag once in Terminal after moving `RAKZ.app` to Applications:
+> ```bash
+> xattr -cr /Applications/RAKZ.app
+> ```
 
 ---
 
@@ -94,7 +95,7 @@ Most flashcard apps optimize for short-term cramming. RAKZ is built around peer-
 4. **Restrained Socratic Co-Pilot (Optional BYOK):**
    - Five read-only modes (*Quiz Me*, *Find Bridges*, *Critique Hook*, *Ask Why*, *Ask*) powered by your own OpenRouter key — scaffolds critical thinking without writing cards for you.
 5. **Native Bilingual RTL & Dual Themes:**
-   - Automatic `dir="auto"` alignment for seamless Arabic (RTL) and English (LTR) study notes, plus **Precision Dark** and **Warm Paper & Ink Light** themes synced to native Windows 11 titlebars.
+   - Automatic `dir="auto"` alignment for seamless Arabic (RTL) and English (LTR) study notes, plus **Precision Dark** and **Warm Paper & Ink Light** themes synced to native window chrome.
 
 ---
 
@@ -128,7 +129,7 @@ app_folder/    (Vue 3 + TypeScript + Tauri 2 shell)
 | Folder | Role | Guardrails |
 | --- | --- | --- |
 | `engine_folder/` | Pure TypeScript domain store, actions, link scoring, and `.mns` bridge | Zero DOM, Vue, or Tauri imports; untouched by UI shell |
-| `io_folder/` | `rakz-io` Rust crate — 9 async Tauri commands (`safe_join`, Windows-safe atomic writes, OS keyring) | No parsing, no business logic, no network |
+| `io_folder/` | `rakz-io` Rust crate — 9 async Tauri commands (`safe_join`, atomic writes, OS keyring) | No parsing, no business logic, no network |
 | `app_folder/` | Vite + Vue 3 + TypeScript frontend + thin Tauri 2 desktop shell | UI components import only `@/composables/library` |
 
 ### Non-Negotiable Invariants
@@ -149,11 +150,13 @@ See [SECURITY.md](SECURITY.md) for the full threat model and vulnerability discl
 - **100% Local-First:** Plain-text `.mns` vault files live on your disk — zero accounts, zero analytics, zero telemetry.
 - **Strict Content Security Policy:** Desktop builds restrict scripts to `'self'`, disallow plugins/frames, and limit outbound connections strictly to local IPC and `https://openrouter.ai`.
 - **Sandboxed File IO:** Rust `safe_join` blocks path traversal, backslashes, NUL bytes, and Windows Alternate Data Streams (`:`), verifies canonical containment, and limits `open_mns_file` to `.mns`, `.rkz`, `.txt`, and `.json`.
-- **OS Keychain Secret Isolation:** Optional OpenRouter API keys live solely in Windows Credential Manager / macOS Keychain / Linux Secret Service — never in `settings.json`, vault files, or `localStorage`, sent only over HTTPS, and redacted from error messages.
+- **OS Keychain Secret Isolation:** Optional OpenRouter API keys live solely in Windows Credential Manager, macOS Keychain, or Linux Secret Service — never in `settings.json`, vault files, or `localStorage`, sent only over HTTPS, and redacted from error messages.
 
 ---
 
 ## Keyboard Shortcuts
+
+*(Use `⌘` instead of `Ctrl` on macOS)*
 
 | Shortcut | Action |
 | --- | --- |
@@ -172,7 +175,7 @@ See [SECURITY.md](SECURITY.md) for the full threat model and vulnerability discl
 
 ## Local Development
 
-**Prerequisites:** Node.js 22+, Rust stable toolchain (with MSVC Build Tools on Windows).
+**Prerequisites:** Node.js 22+, Rust stable toolchain (+ MSVC Build Tools on Windows, Xcode CLI tools on macOS, or WebKitGTK 4.1 dev libraries on Linux).
 
 ```bash
 # Run inside app_folder/
@@ -186,7 +189,7 @@ npm test             # Vitest unit & invariant suite
 npm run tauri build  # Build native desktop binary & installers
 ```
 
-Run Rust IO sandbox unit tests (cross-platform Windows & Unix):
+Run Rust IO sandbox unit tests (cross-platform Windows, macOS & Linux):
 
 ```bash
 cargo test --manifest-path io_folder/Cargo.toml
