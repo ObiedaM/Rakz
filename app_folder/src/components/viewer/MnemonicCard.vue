@@ -1,91 +1,97 @@
 <script setup lang="ts">
-// ========== 1. IMPORTS ==========
+// Mnemonic Studio Card — clean, focused editing & reading surface.
+// Uses only useLibrary() (Invariant #1), case-insensitive card type toggles,
+// Escape-cancellable inline rename & two-step delete (Invariant #3).
+
 import { computed, ref } from "vue";
 import StarRating from "@/components/ui/StarRating.vue";
 import TagTokens from "@/components/ui/TagTokens.vue";
+import ConfirmButton from "@/components/ui/ConfirmButton.vue";
+import Icon from "@/components/ui/Icon.vue";
 import { useLibrary } from "@/composables/library";
-import type { Memonic } from "@engine/types";
-import type { Link } from "@engine/types";
+import type { Link, Memonic } from "@/composables/library";
 
-// ========== 2. TYPES ==========
-/** A picked link target in the new-link form. */
 interface LinkTarget {
   sid: number;
   title: string;
 }
 
-// ========== 3. CONSTANTS ==========
 const TYPES = ["Rule", "Fact", "Story"];
 
-// ========== 4. STATE ==========
-const props = defineProps({
-  memonic: { type: Object as () => Memonic, required: true },
-  editable: { type: Boolean, default: false },
-  compact: { type: Boolean, default: false },
-});
+const props = withDefaults(
+  defineProps<{
+    memonic: Memonic;
+    editable?: boolean;
+    compact?: boolean;
+  }>(),
+  { editable: false, compact: false },
+);
 
-// Pull in both the edit function AND the raw reactive state
-const { editField, memonics, deck, select, remove, link, renameLink } = useLibrary();
+const {
+  editField,
+  setTags,
+  memonics,
+  subjects,
+  deck,
+  select,
+  remove,
+  link,
+  renameLink,
+  getReviewRecord,
+  isCardDue,
+  formatInterval,
+  getDeepRoots,
+  setDeepRoots,
+  cardDepthLevel,
+  cardCrossBridgeCount,
+} = useLibrary();
 
-// Two-step delete: first click arms it (3s window), second click deletes.
-// (Native confirm() dialogs are inert inside the Tauri webview.)
-const confirmingDelete = ref(false);
-let confirmTimer: ReturnType<typeof setTimeout> | null = null;
-
-// Link hints + authoring — pure UI over the EXISTING Link shape {title, targetSID}.
+const rootsOpen = ref(false);
 const linksOpen = ref(true);
-
-// New-link form: search targets by title, pick one, name the edge yourself.
 const newLinkOpen = ref(false);
 const linkQuery = ref("");
 const linkTarget = ref<LinkTarget | null>(null);
 const linkTitle = ref("");
-
-// Rename an edge in place: click its title chip, type the story, Enter.
 const editingLink = ref<number | null>(null);
 const editTitle = ref("");
 
-// ========== 5. LOGIC ==========
+const liveCard = computed<Memonic>(() =>
+  memonics.value.find((m) => m.sid === props.memonic.sid) || props.memonic,
+);
 
-// ----- liveCard -----
-// purpose:   deeply reactive re-resolution of this specific card from the mirror (props are stale snapshots)
-// io:        in → none | out → Memonic (falls back to the prop while unknown)
-// processes: none                                                        [auto]
-const liveCard = computed<Memonic>(() => {
-  return memonics.value.find((m) => m.sid === props.memonic.sid) || props.memonic;
+const cardSubject = computed(() =>
+  subjects.value.find((s) => s.id === liveCard.value.id),
+);
+
+const deepRootsText = computed(() => getDeepRoots(liveCard.value));
+const depthLevel = computed(() => cardDepthLevel(liveCard.value));
+const crossBridges = computed(() => cardCrossBridgeCount(liveCard.value));
+
+function updateDeepRoots(val: string): void {
+  if (!props.editable) return;
+  setDeepRoots(liveCard.value, val);
+}
+
+const reviewBadge = computed(() => {
+  const rec = getReviewRecord(liveCard.value);
+  if (!rec) return { label: "New · Due", due: true };
+  if (isCardDue(liveCard.value)) return { label: "Due now", due: true };
+  return { label: `Review in ${formatInterval(rec.intervalDays, rec.dueAt)}`, due: false };
 });
 
-// ----- askDelete -----
-// purpose:   two-step delete — first click arms (3s window), second click removes
-// io:        in → none | out → none
-// processes: remove                                                        [auto]
-function askDelete(): void {
+function set(field: string, value: unknown): void {
   if (!props.editable) return;
-  if (!confirmingDelete.value) {
-    confirmingDelete.value = true;
-    clearTimeout(confirmTimer ?? undefined);
-    confirmTimer = setTimeout(() => (confirmingDelete.value = false), 3000);
+  if (field === "tags") {
+    setTags(props.memonic.sid, value as string[]);
     return;
   }
-  clearTimeout(confirmTimer ?? undefined);
-  confirmingDelete.value = false;
-  remove(liveCard.value.sid);
+  editField(props.memonic.sid, field, value);
 }
 
-// ----- set -----
-// purpose:   fire one scalar-field edit at the engine (the liveCard computed catches the echo)
-// io:        in → field (string), value (unknown) | out → none
-// processes: editField                                                     [auto]
-function set(field: string, value: unknown): void {
-  if (props.editable) {
-    editField(props.memonic.sid, field, value);
-  }
+function isTypeActive(t: string): boolean {
+  return (liveCard.value.type || "fact").toLowerCase() === t.toLowerCase();
 }
 
-// ----- nav -----
-// purpose:   step to the previous/next card within this card's subject deck (wraps around)
-// io:        in → dir (number, -1 | 1) | out → none
-// processes: select                                                        [auto]
 function nav(dir: number): void {
   const list = deck.value;
   if (list.length < 2) return;
@@ -94,226 +100,969 @@ function nav(dir: number): void {
   select(next.sid);
 }
 
-// ----- deckPos -----
-// purpose:   position indicator for the arrows: "2/5" within the subject deck
-// io:        in → none | out → { i, n }
-// processes: none                                                        [auto]
 const deckPos = computed(() => {
   const list = deck.value;
   const i = list.findIndex((m) => m.sid === liveCard.value.sid);
   return { i: i >= 0 ? i + 1 : 1, n: Math.max(list.length, 1) };
 });
 
-// ----- targetTitle -----
-// purpose:   resolve a link target's title for display
-// io:        in → sid (number) | out → string ('(missing card)' when gone)
-// processes: none                                                        [auto]
 function targetTitle(sid: number): string {
   return memonics.value.find((m) => m.sid === sid)?.title ?? "(missing card)";
 }
 
-// ----- linkResults -----
-// purpose:   up to six unlinked cards whose title matches the new-link search
-// io:        in → none | out → Memonic[]
-// processes: none                                                        [auto]
+function isCrossTarget(sid: number): boolean {
+  const target = memonics.value.find((m) => m.sid === sid);
+  return !!target && target.id !== liveCard.value.id;
+}
+
 const linkResults = computed<Memonic[]>(() => {
   const q = linkQuery.value.trim().toLowerCase();
   if (!q || linkTarget.value) return [];
   const linked = new Set((liveCard.value.links ?? []).map((l) => l.targetSID));
   return memonics.value
-    .filter((m) => m.sid !== liveCard.value.sid && !linked.has(m.sid) && m.title.toLowerCase().includes(q))
+    .filter(
+      (m) =>
+        m.sid !== liveCard.value.sid &&
+        !linked.has(m.sid) &&
+        `${m.title} ${m.id}`.toLowerCase().includes(q),
+    )
     .slice(0, 6);
 });
 
-// ----- createLink -----
-// purpose:   create the named edge to the picked target and close the form
-// io:        in → none | out → none (no-op without a picked target)
-// processes: link                                                          [auto]
 function createLink(): void {
   if (!linkTarget.value) return;
   link(liveCard.value.sid, linkTarget.value.sid, linkTitle.value.trim() || "related");
+  closeNewLink();
+}
+
+function closeNewLink(): void {
   newLinkOpen.value = false;
   linkQuery.value = "";
   linkTarget.value = null;
   linkTitle.value = "";
 }
 
-// ----- startRename -----
-// purpose:   open the inline rename input for one edge
-// io:        in → l (Link) | out → none
-// processes: none                                                          [auto]
 function startRename(l: Link): void {
   if (!props.editable) return;
   editingLink.value = l.targetSID;
   editTitle.value = l.title;
 }
 
-// ----- commitRename -----
-// purpose:   commit the renamed edge (remove + re-add) when the title actually changed
-// io:        in → l (Link) | out → none
-// processes: renameLink                                                    [auto]
-function commitRename(l: Link): void {
-  const t = editTitle.value.trim();
-  if (t && t !== l.title) renameLink(liveCard.value.sid, l.targetSID, t);
+function cancelRename(): void {
   editingLink.value = null;
+  editTitle.value = "";
+}
+
+function commitRename(l: Link): void {
+  if (editingLink.value !== l.targetSID) return;
+  const t = editTitle.value.trim();
+  editingLink.value = null;
+  if (t && t !== l.title) renameLink(liveCard.value.sid, l.targetSID, t);
 }
 </script>
 
 <template>
-  <div :style="{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', backgroundColor: '#161618', borderRadius: '12px', border: '1px solid #2C2C30', overflow: 'hidden', fontFamily: 'system-ui, -apple-system, sans-serif' }">
+  <article class="card-shell">
+    <!-- Top Header Bar -->
+    <div class="card-head select-none">
+      <div class="head-left">
+        <div class="nav-arrows">
+          <button
+            type="button"
+            class="nav-btn"
+            :disabled="deckPos.n < 2"
+            title="Previous card in subject (Alt+←)"
+            aria-label="Previous card"
+            @click.stop="nav(-1)"
+          >
+            <Icon name="arrow-left" :size="13" />
+          </button>
+          <button
+            type="button"
+            class="nav-btn"
+            :disabled="deckPos.n < 2"
+            title="Next card in subject (Alt+→)"
+            aria-label="Next card"
+            @click.stop="nav(1)"
+          >
+            <Icon name="arrow-right" :size="13" />
+          </button>
+        </div>
 
-    <!-- TOP NAV BAR -->
-    <div :style="{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 24px', borderBottom: '1px solid #222' }">
-      <div :style="{ display: 'flex', alignItems: 'center', gap: '8px' }">
-        <!-- .stop is load-bearing: the stack wrapper's own @click re-selects
-             this card, which would instantly undo the navigation. -->
-        <button title="Previous card" @click.stop="nav(-1)" :style="{ width: '32px', height: '32px', borderRadius: '4px', backgroundColor: '#1A1A1E', color: '#666', border: 'none', cursor: 'pointer' }">&lt;</button>
-        <button title="Next card" @click.stop="nav(1)" :style="{ width: '32px', height: '32px', borderRadius: '4px', backgroundColor: '#1A1A1E', color: '#666', border: 'none', cursor: 'pointer' }">&gt;</button>
-        <span :style="{ fontSize: '11px', fontWeight: 700, color: '#8a8a90', fontFamily: 'JetBrains Mono, monospace', marginLeft: '4px' }">{{ deckPos.i }}/{{ deckPos.n }}</span>
-        <span :style="{ fontSize: '11px', fontWeight: 700, color: '#666', letterSpacing: '0.15em', marginLeft: '8px', textTransform: 'uppercase' }">Card</span>
+        <span class="pos-badge tabular font-mono-meta">{{ deckPos.i }}/{{ deckPos.n }}</span>
+
+        <span v-if="cardSubject" class="subject-tag">
+          <span class="subject-dot" :style="{ backgroundColor: cardSubject.color }" />
+          <span>{{ cardSubject.name }}</span>
+        </span>
       </div>
 
-      <!-- TYPE TOGGLES -->
-      <div :style="{ display: 'flex', gap: '4px', backgroundColor: '#0F0F12', padding: '4px', borderRadius: '8px', border: '1px solid #222' }">
+      <!-- Segmented Card Type -->
+      <div class="type-group" role="radiogroup" aria-label="Mnemonic type">
         <button
-          v-for="t in TYPES" :key="t"
+          v-for="t in TYPES"
+          :key="t"
+          type="button"
+          role="radio"
+          :aria-checked="isTypeActive(t)"
+          class="type-btn"
+          :class="{ 'is-active': isTypeActive(t) }"
+          :disabled="!editable"
           @click.prevent="set('type', t)"
-          :style="{
-             padding: '4px 16px', fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', borderRadius: '6px', border: 'none',
-             cursor: editable ? 'pointer' : 'default',
-             backgroundColor: liveCard.type === t ? 'rgba(8,145,178,0.2)' : 'transparent',
-             color: liveCard.type === t ? '#22d3ee' : '#666'
-          }"
-        >{{ t }}</button>
+        >
+          {{ t }}
+        </button>
       </div>
 
-      <div :style="{ width: '96px' }"></div>
+      <span class="review-pill tabular" :class="{ 'is-due': reviewBadge.due }">
+        {{ reviewBadge.label }}
+      </span>
     </div>
 
-    <!-- BODY CONTENT -->
-    <div :style="{ flex: 1, overflowY: 'auto', padding: '32px', display: 'flex', flexDirection: 'column', gap: '24px' }">
-      <!-- Title -->
-      <input
-        v-if="editable" :value="liveCard.title" @input="set('title', ($event.target as HTMLInputElement).value)"
-        placeholder="Card Title..."
-        :style="{ backgroundColor: 'transparent', fontSize: compact ? '24px' : '30px', fontWeight: 700, color: '#fff', border: 'none', outline: 'none', width: '100%' }"
-      />
-      <h1 v-else :style="{ fontSize: compact ? '24px' : '30px', fontWeight: 700, color: '#fff', margin: 0 }">{{ liveCard.title }}</h1>
-
-      <!-- Context / Explanation -->
-      <div :style="{ display: 'flex', flexDirection: 'column', gap: '12px', flex: 1 }">
-         <span :style="{ fontSize: '10px', fontWeight: 700, color: '#666', letterSpacing: '0.2em', textTransform: 'uppercase' }">Context &amp; Explanation</span>
-         <textarea
-           v-if="editable" :value="liveCard.context" @input="set('context', ($event.target as HTMLTextAreaElement).value)"
-           placeholder="Write your explanation here..."
-           :style="{ width: '100%', height: '100%', minHeight: '120px', backgroundColor: '#0F0F12', border: '1px solid #222', borderRadius: '8px', padding: '20px', color: '#D1D1D6', lineHeight: 1.6, resize: 'vertical', outline: 'none', boxSizing: 'border-box' }"
-         ></textarea>
-         <p v-else :style="{ color: '#D1D1D6', lineHeight: 1.6, margin: 0, whiteSpace: 'pre-wrap' }">{{ liveCard.context }}</p>
-      </div>
-
-      <!-- Tags & Links -->
-      <div :style="{ display: 'flex', flexDirection: 'column', gap: '12px', marginTop: 'auto', paddingTop: '16px' }">
-         <span :style="{ fontSize: '10px', fontWeight: 700, color: '#666', letterSpacing: '0.2em', textTransform: 'uppercase' }">Tags &amp; Links</span>
-         <TagTokens v-if="editable" :model-value="liveCard.tags || []" :active-subject-id="liveCard.id" @update:model-value="set('tags', $event)" />
-         <div v-else :style="{ display: 'flex', flexWrap: 'wrap', gap: '8px' }">
-           <span v-for="t in liveCard.tags" :key="t" :style="{ fontSize: '12px', fontFamily: 'monospace', color: '#22d3ee', backgroundColor: 'rgba(8,145,178,0.1)', border: '1px solid rgba(8,145,178,0.3)', borderRadius: '20px', padding: '4px 12px' }">#{{ t }}</span>
-         </div>
-
-         <!-- Link hints: key = edge title, value = target card. The value is a
-              masked read-only chip — clicking it opens the target; editing and
-              unlinking stay in the right panel so nothing gets messed up here. -->
-         <div v-if="editable || (liveCard.links && liveCard.links.length)" :style="{ display: 'flex', flexDirection: 'column', gap: '8px' }">
-            <div :style="{ display: 'flex', alignItems: 'center', gap: '10px' }">
-               <span :style="{ fontSize: '10px', fontWeight: 700, color: '#666', letterSpacing: '0.2em', textTransform: 'uppercase', cursor: 'pointer' }" @click.stop="linksOpen = !linksOpen">🔗 Linked ({{ liveCard.links?.length || 0 }})</span>
-               <span :style="{ fontSize: '10px', color: '#22d3ee', fontWeight: 700, cursor: 'pointer' }" @click.stop="linksOpen = !linksOpen">{{ linksOpen ? 'hide' : 'show' }}</span>
-               <button v-if="editable" @click.stop="newLinkOpen = !newLinkOpen" :style="{ marginLeft: 'auto', fontSize: '10px', fontWeight: 700, color: '#22d3ee', backgroundColor: 'transparent', border: '1px solid rgba(8,145,178,0.4)', borderRadius: '6px', padding: '3px 10px', cursor: 'pointer' }">+ New Link</button>
-            </div>
-
-            <!-- title|sid rows — the edge title is the STORY; click it to rewrite it -->
-            <div v-if="linksOpen && liveCard.links?.length" :style="{ display: 'flex', flexDirection: 'column', gap: '6px' }">
-               <div v-for="l in liveCard.links" :key="String(l.targetSID) + '·' + l.title" :style="{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }">
-                  <input
-                    v-if="editingLink === l.targetSID"
-                    v-model="editTitle"
-                    @keydown.enter="commitRename(l)"
-                    @blur="commitRename(l)"
-                    @click.stop
-                    :style="{ fontSize: '12px', fontFamily: 'JetBrains Mono, monospace', color: '#22d3ee', backgroundColor: '#0F0F12', border: '1px solid rgba(8,145,178,0.6)', borderRadius: '20px', padding: '3px 10px', outline: 'none', width: '180px' }"
-                  />
-                  <span
-                    v-else
-                    :title="editable ? 'Rename this link (why are they linked?)' : ''"
-                    @click.stop="startRename(l)"
-                    :style="{ fontSize: '12px', fontFamily: 'JetBrains Mono, monospace', color: '#22d3ee', backgroundColor: 'rgba(8,145,178,0.1)', border: '1px solid rgba(8,145,178,0.3)', borderRadius: '20px', padding: '3px 10px', flexShrink: 0, cursor: editable ? 'text' : 'default' }"
-                  >#{{ l.title }}</span>
-                  <span :style="{ color: '#555', fontSize: '12px', flexShrink: 0 }">→</span>
-                  <button
-                    :title="'Open: ' + targetTitle(l.targetSID)"
-                    @click.stop="select(l.targetSID)"
-                    :style="{ fontSize: '12px', color: '#C8C8C8', backgroundColor: '#1A1A1E', border: '1px solid #2C2C30', borderRadius: '6px', padding: '3px 10px', cursor: 'pointer', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '260px' }"
-                  >{{ targetTitle(l.targetSID) }} <span :style="{ color: '#555', fontFamily: 'JetBrains Mono, monospace' }">|{{ l.targetSID }}</span></button>
-               </div>
-            </div>
-
-            <!-- new-link form: search title → pick → name the edge -->
-            <div v-if="newLinkOpen && editable" @click.stop :style="{ display: 'flex', flexDirection: 'column', gap: '6px', backgroundColor: '#0F0F12', border: '1px solid #222', borderRadius: '8px', padding: '10px' }">
-               <input
-                 v-model="linkQuery"
-                 @input="linkTarget = null"
-                 placeholder="Search a card by title…"
-                 :style="{ backgroundColor: 'transparent', border: '1px solid #222', borderRadius: '6px', padding: '6px 10px', color: '#e8e8e8', fontSize: '12px', outline: 'none' }"
-               />
-               <div v-if="linkResults.length" :style="{ display: 'flex', flexDirection: 'column', gap: '2px' }">
-                  <button
-                    v-for="m in linkResults" :key="m.sid"
-                    @click.stop="linkTarget = { sid: m.sid, title: m.title }; linkQuery = m.title"
-                    :style="{ textAlign: 'left', fontSize: '12px', color: '#C8C8C8', backgroundColor: 'transparent', border: 'none', borderRadius: '4px', padding: '4px 8px', cursor: 'pointer' }"
-                  >{{ m.title }} <span :style="{ color: '#555', fontFamily: 'JetBrains Mono, monospace' }">· {{ m.id }} |{{ m.sid }}</span></button>
-               </div>
-               <div v-if="linkTarget" :style="{ fontSize: '11px', color: '#8AE28A' }">→ {{ linkTarget.title }} <span :style="{ fontFamily: 'JetBrains Mono, monospace', color: '#555' }">|{{ linkTarget.sid }}</span></div>
-               <input
-                 v-model="linkTitle"
-                 @keydown.enter="createLink"
-                 placeholder="Why linked? — the link's title (e.g. same-joke, contrast, story…)"
-                 :style="{ backgroundColor: 'transparent', border: '1px solid #222', borderRadius: '6px', padding: '6px 10px', color: '#22d3ee', fontSize: '12px', fontFamily: 'JetBrains Mono, monospace', outline: 'none' }"
-               />
-               <div :style="{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }">
-                  <button @click.stop="newLinkOpen = false" :style="{ fontSize: '11px', color: '#9A9AA2', backgroundColor: 'transparent', border: '1px solid #2C2C2C', borderRadius: '6px', padding: '4px 12px', cursor: 'pointer' }">Cancel</button>
-                  <button @click.stop="createLink" :style="{ fontSize: '11px', fontWeight: 700, color: linkTarget ? '#000' : '#555', backgroundColor: linkTarget ? '#0891b2' : '#1E1E22', border: 'none', borderRadius: '6px', padding: '4px 12px', cursor: linkTarget ? 'pointer' : 'default' }">Create Link</button>
-               </div>
-            </div>
-         </div>
-
-         <!-- @hir — which vault file/folder this card saves to. Folders are born on disk on the next save. -->
-         <div v-if="editable" :style="{ display: 'flex', alignItems: 'center', gap: '10px' }">
-            <span :style="{ fontSize: '10px', fontWeight: 700, color: '#666', letterSpacing: '0.15em', textTransform: 'uppercase', flexShrink: 0 }">📁 Location</span>
-            <input
-              :value="liveCard.hierarchy || ''"
-              @change="set('hierarchy', ($event.target as HTMLInputElement).value.trim())"
-              placeholder="folder/subfolder — empty saves to <subject>.mns"
-              :style="{ flex: 1, backgroundColor: '#0F0F12', border: '1px solid #222', borderRadius: '6px', padding: '6px 10px', color: '#9A9AA2', fontSize: '12px', fontFamily: 'JetBrains Mono, monospace', outline: 'none' }"
-            />
-         </div>
-      </div>
-    </div>
-
-    <!-- BOTTOM BAR — edits save automatically; delete is a two-step arm+confirm -->
-    <div :style="{ padding: '14px 24px', backgroundColor: '#121214', borderTop: '1px solid #222', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }">
-      <div :style="{ display: 'flex', alignItems: 'center', gap: '14px' }">
-        <button
+    <!-- Main Editable Studio Body -->
+    <div class="card-body rkz-scroll select-text">
+      <!-- Layer 1: Mnemonic Title / Hook -->
+      <div class="title-block">
+        <label v-if="editable" class="sr-only" :for="`card-title-${liveCard.sid}`">Mnemonic hook</label>
+        <input
           v-if="editable"
-          @click.stop="askDelete"
-          :style="{
-            padding: '6px 14px', borderRadius: '6px', fontSize: '11px', fontWeight: 700, cursor: 'pointer',
-            backgroundColor: confirmingDelete ? '#7f1d1d' : 'transparent',
-            border: confirmingDelete ? '1px solid #ef4444' : '1px solid #2C2C30',
-            color: confirmingDelete ? '#fecaca' : '#8a8a90',
-            transition: 'all 0.15s',
-          }"
-        >{{ confirmingDelete ? 'Confirm delete?' : '🗑 Delete' }}</button>
-        <span :style="{ fontSize: '10px', color: '#555', letterSpacing: '0.1em', textTransform: 'uppercase' }">{{ editable ? 'Edits save automatically' : '' }}</span>
+          :id="`card-title-${liveCard.sid}`"
+          dir="auto"
+          :value="liveCard.title"
+          placeholder="Write a vivid mnemonic hook or condensed rule…"
+          class="title-input"
+          :class="{ 'is-compact': compact }"
+          @input="set('title', ($event.target as HTMLInputElement).value)"
+        />
+        <h1 v-else dir="auto" class="title-heading" :class="{ 'is-compact': compact }">
+          {{ liveCard.title || "Untitled mnemonic" }}
+        </h1>
       </div>
-      <StarRating :model-value="liveCard.importance" :readonly="!editable" @update:model-value="set('importance', $event)" />
+
+      <!-- Layer 2: Core Context & Explanation -->
+      <div class="section-block flex-1">
+        <div class="section-head select-none">
+          <span class="rkz-label">Core Explanation (L2)</span>
+          <div class="depth-meta">
+            <span
+              class="depth-pill font-mono-meta"
+              :title="`Learning depth: L1 Hook${depthLevel >= 2 ? ' · L2 Core' : ''}${depthLevel >= 3 ? ' · L3 Deep Roots' : ''}`"
+            >
+              <span class="depth-step is-lit">L1</span>
+              <span class="depth-step" :class="{ 'is-lit': depthLevel >= 2 }">L2</span>
+              <span class="depth-step" :class="{ 'is-lit': depthLevel >= 3 }">L3</span>
+            </span>
+            <span
+              class="bridge-state-pill"
+              :class="crossBridges > 0 ? 'is-bridged' : 'is-island'"
+              :title="
+                crossBridges > 0
+                  ? `Connected to ${crossBridges} other ${crossBridges === 1 ? 'subject' : 'subjects'}`
+                  : 'Isolated island — bridge to another subject for durable retention'
+              "
+            >
+              {{ crossBridges > 0 ? `Bridged · ${crossBridges}` : "Island" }}
+            </span>
+          </div>
+        </div>
+        <textarea
+          v-if="editable"
+          dir="auto"
+          :value="liveCard.context"
+          placeholder="Explain the concept in your own words — why does this rule or fact hold?"
+          class="rkz-input context-area"
+          @input="set('context', ($event.target as HTMLTextAreaElement).value)"
+        />
+        <p v-else dir="auto" class="context-prose">
+          {{ liveCard.context || "No explanation added yet." }}
+        </p>
+      </div>
+
+      <!-- Layer 3: Deep Roots & First Principles (True Science — local study metadata) -->
+      <div v-if="editable || deepRootsText" class="section-block roots-block">
+        <div class="section-head select-none">
+          <button
+            type="button"
+            class="collapse-trigger"
+            @click.stop="rootsOpen = !rootsOpen"
+          >
+            <Icon :name="rootsOpen ? 'chevron-down' : 'chevron-right'" :size="12" />
+            <span class="rkz-label">Deep Roots &amp; First Principles (L3)</span>
+            <span v-if="deepRootsText" class="roots-badge">authored</span>
+            <span v-else class="roots-opt">optional</span>
+          </button>
+        </div>
+
+        <button
+          v-if="!rootsOpen && deepRootsText"
+          type="button"
+          dir="auto"
+          class="roots-preview"
+          @click.stop="rootsOpen = true"
+        >
+          {{ deepRootsText }}
+        </button>
+
+        <template v-if="rootsOpen">
+          <textarea
+            v-if="editable"
+            dir="auto"
+            :value="deepRootsText"
+            placeholder="First-principles derivation, historical origin, edge cases, or real-world transfer…"
+            class="rkz-input roots-area"
+            @input="updateDeepRoots(($event.target as HTMLTextAreaElement).value)"
+          />
+          <p v-else dir="auto" class="context-prose">
+            {{ deepRootsText }}
+          </p>
+        </template>
+      </div>
+
+      <!-- Concept Tags -->
+      <div class="section-block">
+        <div class="section-head select-none">
+          <span class="rkz-label">Concept Tags</span>
+          <span class="tag-hint">Shared tags across subjects surface bridges automatically</span>
+        </div>
+        <TagTokens
+          v-if="editable"
+          :model-value="liveCard.tags || []"
+          :active-subject-id="liveCard.id"
+          @update:model-value="set('tags', $event)"
+        />
+        <div v-else class="readonly-tags">
+          <span v-for="t in liveCard.tags" :key="t" class="readonly-tag font-mono-meta">#{{ t }}</span>
+          <span v-if="!liveCard.tags.length" class="muted-note">No tags</span>
+        </div>
+      </div>
+
+      <!-- Outgoing Structural Links -->
+      <div v-if="editable || liveCard.links.length" class="section-block">
+        <div class="section-head select-none">
+          <button type="button" class="collapse-trigger" @click.stop="linksOpen = !linksOpen">
+            <Icon name="link" :size="12" />
+            <span class="rkz-label">Outgoing Links</span>
+            <span class="link-count tabular">{{ liveCard.links.length }}</span>
+            <span class="toggle-word">{{ linksOpen ? "hide" : "show" }}</span>
+          </button>
+
+          <button
+            v-if="editable"
+            type="button"
+            class="rkz-btn mini-btn"
+            @click.stop="newLinkOpen = !newLinkOpen"
+          >
+            <Icon name="plus" :size="12" />
+            <span>Add Link</span>
+          </button>
+        </div>
+
+        <div v-if="linksOpen && liveCard.links.length" class="link-list">
+          <div
+            v-for="l in liveCard.links"
+            :key="`${l.targetSID}-${l.title}`"
+            class="link-row"
+          >
+            <input
+              v-if="editingLink === l.targetSID"
+              v-model="editTitle"
+              class="rkz-input font-mono-meta rename-input"
+              @keydown.enter.prevent="commitRename(l)"
+              @keydown.esc.stop.prevent="cancelRename"
+              @blur="commitRename(l)"
+              @click.stop
+            />
+            <button
+              v-else
+              type="button"
+              class="edge-chip font-mono-meta"
+              :class="{ 'is-bridge': isCrossTarget(l.targetSID) }"
+              :title="editable ? 'Click to rename why these concepts connect' : l.title"
+              @click.stop="startRename(l)"
+            >
+              #{{ l.title }}
+            </button>
+
+            <Icon name="arrow-right" :size="12" class="edge-arrow" />
+
+            <button
+              type="button"
+              class="target-btn"
+              :title="`Open ${targetTitle(l.targetSID)}`"
+              @click.stop="select(l.targetSID)"
+            >
+              <span dir="auto" class="truncate">{{ targetTitle(l.targetSID) }}</span>
+              <span v-if="isCrossTarget(l.targetSID)" class="bridge-dot" title="Cross-subject bridge" />
+            </button>
+          </div>
+        </div>
+
+        <!-- Inline New Link Form -->
+        <div
+          v-if="newLinkOpen && editable"
+          class="new-link-form"
+          @click.stop
+          @keydown.esc.stop="closeNewLink"
+        >
+          <input
+            v-model="linkQuery"
+            placeholder="Search a card by title or subject…"
+            class="rkz-input form-input"
+            @input="linkTarget = null"
+          />
+
+          <div v-if="linkResults.length" class="picker-list">
+            <button
+              v-for="m in linkResults"
+              :key="m.sid"
+              type="button"
+              class="picker-row"
+              @click.stop="
+                linkTarget = { sid: m.sid, title: m.title };
+                linkQuery = m.title;
+              "
+            >
+              <span class="truncate">{{ m.title }}</span>
+              <span class="picker-subj font-mono-meta">{{ m.id }}</span>
+            </button>
+          </div>
+
+          <div v-if="linkTarget" class="picked-target">
+            <Icon name="check" :size="12" />
+            <span>Connecting to <strong>{{ linkTarget.title }}</strong></span>
+          </div>
+
+          <input
+            v-model="linkTitle"
+            placeholder="Why are they linked? (e.g. shared-mechanism, contrast, analogy…)"
+            class="rkz-input form-input font-mono-meta"
+            @keydown.enter.prevent="createLink"
+          />
+
+          <div class="form-actions">
+            <button type="button" class="rkz-btn mini-btn" @click.stop="closeNewLink">Cancel</button>
+            <button
+              type="button"
+              class="rkz-btn rkz-btn-primary mini-btn"
+              :disabled="!linkTarget"
+              @click.stop="createLink"
+            >
+              Create Link
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Vault File Location (@hir) -->
+      <div v-if="editable" class="loc-row">
+        <span class="loc-label select-none">
+          <Icon name="folder" :size="12" />
+          <span class="rkz-label">File Path</span>
+        </span>
+        <input
+          :value="liveCard.hierarchy || ''"
+          placeholder="folder/subfolder (blank saves to <subject>.mns)"
+          class="rkz-input font-mono-meta loc-input"
+          @change="set('hierarchy', ($event.target as HTMLInputElement).value.trim())"
+        />
+      </div>
     </div>
-  </div>
+
+    <!-- Bottom Metadata & Actions Bar -->
+    <div class="card-foot select-none">
+      <div class="foot-left">
+        <ConfirmButton
+          v-if="editable"
+          label="Delete"
+          confirm-label="Delete card?"
+          @confirm="remove(liveCard.sid)"
+        />
+        <span v-if="editable" class="autosave-hint">Autosaves locally</span>
+      </div>
+
+      <div class="foot-right">
+        <span class="rkz-label">Strength</span>
+        <StarRating
+          :model-value="liveCard.importance"
+          :readonly="!editable"
+          @update:model-value="set('importance', $event)"
+        />
+      </div>
+    </div>
+  </article>
 </template>
+
+<style scoped>
+.card-shell {
+  container-type: inline-size;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+.card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  height: 46px;
+  padding: 0 18px;
+  border-bottom: 1px solid var(--border-subtle);
+  flex-shrink: 0;
+}
+
+.head-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.nav-arrows {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.nav-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--border-subtle);
+  background-color: var(--bg-input);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background-color var(--ease-fast), color var(--ease-fast), border-color var(--ease-fast);
+}
+
+.nav-btn:hover:not(:disabled) {
+  background-color: var(--bg-hover);
+  border-color: var(--border-default);
+  color: var(--text-primary);
+}
+
+.nav-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.pos-badge {
+  font-size: 11px;
+  color: var(--text-muted);
+  padding: 0 4px;
+}
+
+.subject-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.subject-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+
+.type-group {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+  background-color: var(--bg-input);
+}
+
+.type-btn {
+  height: 24px;
+  padding: 0 11px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background-color var(--ease-fast), color var(--ease-fast);
+}
+
+.type-btn:hover:not(:disabled):not(.is-active) {
+  color: var(--text-primary);
+}
+
+.type-btn.is-active {
+  background-color: var(--accent-subtle);
+  color: var(--accent);
+}
+
+.review-pill {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border-subtle);
+  background-color: var(--bg-input);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.review-pill.is-due {
+  border-color: var(--bridge-border);
+  background-color: var(--bridge-subtle);
+  color: var(--bridge);
+  font-weight: 600;
+}
+
+.card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 22px 24px;
+}
+
+.title-input {
+  width: 100%;
+  border: none;
+  background: transparent;
+  padding: 2px 0;
+  font-size: 24px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  line-height: 1.25;
+  color: var(--text-primary);
+  outline: none;
+}
+
+.title-input:focus-visible {
+  box-shadow: none;
+}
+
+.title-input::placeholder {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.title-input.is-compact,
+.title-heading.is-compact {
+  font-size: 20px;
+}
+
+.title-heading {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  line-height: 1.25;
+}
+
+.section-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.tag-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.context-area {
+  width: 100%;
+  min-height: 108px;
+  flex: 1;
+  padding: 12px 14px;
+  font-size: 14px;
+  line-height: 1.65;
+  resize: vertical;
+  font-family: var(--font-sans);
+}
+
+.depth-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.depth-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 6px;
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--border-subtle);
+  background-color: var(--bg-input);
+  font-size: 10px;
+}
+
+.depth-step {
+  color: var(--text-muted);
+  opacity: 0.45;
+}
+
+.depth-step.is-lit {
+  color: var(--text-primary);
+  opacity: 1;
+  font-weight: 600;
+}
+
+.bridge-state-pill {
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--border-subtle);
+}
+
+.bridge-state-pill.is-bridged {
+  border-color: var(--bridge-border);
+  background-color: var(--bridge-subtle);
+  color: var(--bridge);
+}
+
+.bridge-state-pill.is-island {
+  background-color: var(--bg-input);
+  color: var(--text-muted);
+}
+
+.roots-block {
+  padding-top: 2px;
+}
+
+.roots-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: var(--radius-xs);
+  background-color: var(--accent-subtle);
+  color: var(--accent);
+}
+
+.roots-opt {
+  font-size: 10.5px;
+  color: var(--text-muted);
+}
+
+.roots-preview {
+  display: block;
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px dashed var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background-color: var(--bg-input);
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  line-height: 1.5;
+  text-align: start;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: border-color var(--ease-fast), color var(--ease-fast);
+}
+
+.roots-preview:hover {
+  border-color: var(--border-strong);
+  color: var(--text-primary);
+}
+
+.roots-area {
+  width: 100%;
+  min-height: 82px;
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.6;
+  resize: vertical;
+  font-family: var(--font-sans);
+}
+
+.context-prose {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.65;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+}
+
+.readonly-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.readonly-tag {
+  font-size: 11.5px;
+  padding: 2px 8px;
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--border-default);
+  background-color: var(--bg-input);
+  color: var(--text-secondary);
+}
+
+.muted-note {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.collapse-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: none;
+  background: transparent;
+  padding: 0;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.link-count {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.toggle-word {
+  font-size: 11px;
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.mini-btn {
+  height: 24px;
+  padding: 0 8px;
+  font-size: 11px;
+}
+
+.link-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.link-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.edge-chip {
+  height: 24px;
+  padding: 0 8px;
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--border-default);
+  background-color: var(--bg-input);
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: border-color var(--ease-fast), color var(--ease-fast);
+}
+
+.edge-chip:hover {
+  border-color: var(--accent-border);
+  color: var(--accent);
+}
+
+.edge-chip.is-bridge {
+  border-color: var(--bridge-border);
+  background-color: var(--bridge-subtle);
+  color: var(--bridge);
+}
+
+.rename-input {
+  width: 170px;
+  height: 24px;
+  padding: 0 8px;
+  font-size: 11.5px;
+}
+
+.edge-arrow {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.target-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 280px;
+  height: 24px;
+  padding: 0 9px;
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--border-subtle);
+  background-color: var(--bg-input);
+  color: var(--text-primary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background-color var(--ease-fast), border-color var(--ease-fast);
+}
+
+.target-btn:hover {
+  background-color: var(--bg-hover);
+  border-color: var(--border-strong);
+}
+
+.bridge-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background-color: var(--bridge);
+  flex-shrink: 0;
+}
+
+.new-link-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-default);
+  background-color: var(--bg-input);
+}
+
+.form-input {
+  height: 30px;
+  padding: 0 9px;
+  font-size: 12px;
+}
+
+.picker-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 132px;
+  overflow-y: auto;
+}
+
+.picker-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 8px;
+  border: none;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.picker-row:hover {
+  background-color: var(--bg-hover);
+}
+
+.picker-subj {
+  font-size: 10.5px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.picked-target {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  color: var(--ok);
+}
+
+.form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.loc-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-top: 2px;
+}
+
+.loc-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.loc-input {
+  height: 28px;
+  padding: 0 9px;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+}
+
+.card-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  height: 46px;
+  padding: 0 18px;
+  background-color: var(--bg-sidebar);
+  border-top: 1px solid var(--border-subtle);
+  flex-shrink: 0;
+}
+
+.foot-left,
+.foot-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.autosave-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+@container (max-width: 560px) {
+  .tag-hint,
+  .autosave-hint,
+  .subject-tag {
+    display: none;
+  }
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+}
+</style>

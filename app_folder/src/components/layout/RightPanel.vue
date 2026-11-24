@@ -1,128 +1,524 @@
 <script setup lang="ts">
-// ========== 1. IMPORTS ==========
+// Right Connections Panel — Surfaces Suggested Bridges, Outgoing Links, AND
+// Incoming Backlinks (fixing the asymmetric "0 linked" bug on linked targets).
+
 import { computed } from "vue";
 import { useLibrary } from "@/composables/library";
+import type { Memonic } from "@/composables/library";
 import { useAgent } from "@/composables/useAgent";
-import type { Memonic } from "@engine/types";
+import Icon from "@/components/ui/Icon.vue";
 
-// ========== 2. TYPES ==========
-// (none)
+const emit = defineEmits<{ "jump-card": [] }>();
 
-// ========== 3. CONSTANTS ==========
-// (none)
+const {
+  active,
+  subjects,
+  activeLinks,
+  activeBacklinks,
+  activeSuggestions,
+  link,
+  unlink,
+  select,
+} = useLibrary();
 
-// ========== 4. STATE ==========
-const { active, subjects, activeLinks, activeSuggestions, link, unlink, select } = useLibrary();
 const { openAsk } = useAgent();
 
-// ========== 5. LOGIC ==========
-
-// ----- subjectOf -----
-// purpose:   resolve a subject id to its colored projection object
-// io:        in → id (string) | out → Subject | undefined
-// processes: none                                                        [auto]
 function subjectOf(id: string) {
   return subjects.value.find((s) => s.id === id);
 }
 
-// ----- linkTitleFor -----
-// purpose:   default edge title = the first shared tag (the visible REASON for the suggestion) instead of the meaningless 'manual'; renameable on the card
-// io:        in → a, b (Memonic) | out → string ('related' when nothing shared)
-// processes: none                                                        [auto]
 function linkTitleFor(a: Memonic, b: Memonic): string {
   const bt = new Set(b.tags.map((t) => t.toLowerCase()));
   return a.tags.find((t) => bt.has(t.toLowerCase())) ?? "related";
 }
 
-// a null-safe active card for the template
+function jump(sid: number): void {
+  select(sid);
+  emit("jump-card");
+}
+
 const activeCard = computed(() => active.value);
+const totalConnected = computed(() => activeLinks.value.length + activeBacklinks.value.length);
+const hasNothing = computed(
+  () =>
+    activeSuggestions.value.length === 0 &&
+    activeLinks.value.length === 0 &&
+    activeBacklinks.value.length === 0,
+);
 </script>
 
 <template>
-  <aside :style="{ height: '100%', display: 'flex', flexDirection: 'column', backgroundColor: '#0B0B0D', borderLeft: '1px solid #161618', fontFamily: 'system-ui, -apple-system, sans-serif' }">
+  <aside class="right-panel select-none">
+    <!-- Header (compact, never overflows even at 240px width) -->
+    <div class="panel-head">
+      <div class="head-title-wrap">
+        <span class="rkz-label panel-heading">Connections</span>
+        <span class="count-pill tabular">{{ totalConnected }}</span>
+      </div>
 
-    <!-- Header -->
-    <div :style="{ padding: '16px 20px', borderBottom: '1px solid #161618' }">
-      <div :style="{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }">
-        <h3 :style="{ fontSize: '11px', fontWeight: 700, letterSpacing: '0.15em', color: '#f0f0f0', textTransform: 'uppercase', margin: 0 }">&gt; | Linked Concepts</h3>
-        <span :style="{ fontSize: '11px', fontWeight: 700, color: '#0891b2', backgroundColor: 'rgba(8,145,178,0.15)', padding: '2px 8px', borderRadius: '4px' }">{{ activeLinks?.length || 0 }} linked</span>
-        <button
-          v-if="activeCard"
-          title="Ask AI about this card"
-          :style="{ fontSize: '11px', fontWeight: 700, color: '#22d3ee', backgroundColor: 'transparent', border: '1px solid rgba(8,145,178,0.4)', borderRadius: '6px', padding: '3px 10px', cursor: 'pointer', marginLeft: '8px' }"
-          @click="openAsk"
-        >✦ Ask AI</button>
+      <button
+        v-if="activeCard"
+        type="button"
+        class="rkz-btn rkz-btn-accent-soft copilot-btn"
+        title="Open Restrained AI Co-Pilot (Ctrl+J)"
+        @click="openAsk()"
+      >
+        <Icon name="sparkles" :size="12" />
+        <span>Co-Pilot</span>
+      </button>
+    </div>
+
+    <!-- Scrollable Connections Body -->
+    <div class="panel-body rkz-scroll">
+      <!-- SUGGESTED BRIDGES -->
+      <section v-if="activeSuggestions.length > 0" class="conn-section">
+        <div class="section-head">
+          <span class="rkz-label">Suggested Bridges</span>
+          <span class="sec-count tabular">{{ activeSuggestions.length }}</span>
+        </div>
+
+        <div class="card-stack">
+          <div
+            v-for="s in activeSuggestions"
+            :key="s.memonic.sid"
+            class="conn-card"
+            :class="{ 'is-cross': s.cross }"
+          >
+            <div class="conn-meta">
+              <span class="meta-subj">
+                <span class="subj-dot" :style="{ backgroundColor: subjectOf(s.memonic.id)?.color || 'var(--text-muted)' }" />
+                <span class="truncate">{{ subjectOf(s.memonic.id)?.name || s.memonic.id }}</span>
+              </span>
+              <span class="score-pill tabular font-mono-meta">score {{ s.score }}</span>
+            </div>
+
+            <button type="button" dir="auto" class="conn-title" @click="jump(s.memonic.sid)">
+              {{ s.memonic.title }}
+            </button>
+
+            <div v-if="s.sharedTags.length" class="shared-row">
+              <span v-for="t in s.sharedTags.slice(0, 3)" :key="t" class="shared-tag font-mono-meta">
+                #{{ t }}
+              </span>
+            </div>
+
+            <button
+              v-if="activeCard"
+              type="button"
+              class="rkz-btn rkz-btn-primary link-cta"
+              @click.prevent="link(activeCard.sid, s.memonic.sid, linkTitleFor(activeCard, s.memonic))"
+            >
+              <Icon :name="s.cross ? 'bridge' : 'link'" :size="13" />
+              <span>{{ s.cross ? "Build Cross-Subject Bridge" : "Link Concept" }}</span>
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- OUTGOING LINKS -->
+      <section v-if="activeLinks.length > 0" class="conn-section">
+        <div class="section-head">
+          <span class="rkz-label">Linked From This Card</span>
+          <span class="sec-count tabular">{{ activeLinks.length }}</span>
+        </div>
+
+        <div class="card-stack">
+          <div
+            v-for="l in activeLinks"
+            :key="`out-${l.memonic.sid}-${l.title}`"
+            class="conn-card"
+            :class="{ 'is-cross': l.cross }"
+          >
+            <div class="conn-meta">
+              <span class="meta-subj">
+                <span class="subj-dot" :style="{ backgroundColor: subjectOf(l.memonic.id)?.color || 'var(--text-muted)' }" />
+                <span class="truncate">{{ subjectOf(l.memonic.id)?.name || l.memonic.id }}</span>
+              </span>
+              <span v-if="l.cross" class="bridge-badge">Bridge</span>
+            </div>
+
+            <button type="button" dir="auto" class="conn-title" @click="jump(l.memonic.sid)">
+              {{ l.memonic.title }}
+            </button>
+
+            <div class="conn-foot">
+              <span class="edge-pill font-mono-meta" :class="{ 'is-cross': l.cross }" :title="`#${l.title || 'related'}`">
+                #{{ l.title || "related" }}
+              </span>
+              <button
+                v-if="activeCard"
+                type="button"
+                class="unlink-btn"
+                title="Remove link"
+                aria-label="Remove link"
+                @click.prevent="unlink(activeCard.sid, l.memonic.sid)"
+              >
+                <Icon name="unlink" :size="12" />
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- INCOMING BACKLINKS -->
+      <section v-if="activeBacklinks.length > 0" class="conn-section">
+        <div class="section-head">
+          <span class="rkz-label">Referenced By (Backlinks)</span>
+          <span class="sec-count tabular">{{ activeBacklinks.length }}</span>
+        </div>
+
+        <div class="card-stack">
+          <div
+            v-for="b in activeBacklinks"
+            :key="`in-${b.memonic.sid}-${b.title}`"
+            class="conn-card"
+            :class="{ 'is-cross': b.cross }"
+          >
+            <div class="conn-meta">
+              <span class="meta-subj">
+                <span class="subj-dot" :style="{ backgroundColor: subjectOf(b.memonic.id)?.color || 'var(--text-muted)' }" />
+                <span class="truncate">{{ subjectOf(b.memonic.id)?.name || b.memonic.id }}</span>
+              </span>
+              <span v-if="b.cross" class="bridge-badge">Bridge</span>
+            </div>
+
+            <button type="button" dir="auto" class="conn-title" @click="jump(b.memonic.sid)">
+              {{ b.memonic.title }}
+            </button>
+
+            <div class="conn-foot">
+              <span class="edge-pill font-mono-meta" :class="{ 'is-cross': b.cross }" :title="`← #${b.title || 'related'}`">
+                ← #{{ b.title || "related" }}
+              </span>
+              <button
+                v-if="activeCard"
+                type="button"
+                class="unlink-btn"
+                title="Remove incoming link"
+                aria-label="Remove incoming link"
+                @click.prevent="unlink(b.memonic.sid, activeCard.sid)"
+              >
+                <Icon name="unlink" :size="12" />
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- EMPTY STATE -->
+      <div v-if="hasNothing" class="empty-conn">
+        <Icon name="bridge" :size="20" />
+        <p class="empty-heading">Isolated island</p>
+        <p class="empty-desc">
+          Add shared <code class="font-mono-meta">#concept</code> tags across subjects to turn isolated facts into cross-discipline bridges.
+        </p>
       </div>
     </div>
 
-    <div :style="{ flex: 1, overflowY: 'auto', padding: '20px', display: 'flex', flexDirection: 'column', gap: '24px' }">
-
-      <!-- SUGGESTIONS -->
-      <div v-if="activeSuggestions && activeSuggestions.length > 0">
-         <h4 :style="{ fontSize: '10px', fontWeight: 700, color: '#666', letterSpacing: '0.1em', textTransform: 'uppercase', margin: '0 0 12px' }">Suggested</h4>
-         <div :style="{ display: 'flex', flexDirection: 'column', gap: '12px' }">
-            <div v-for="s in activeSuggestions" :key="s.memonic.sid" :style="{ backgroundColor: '#0F0F12', border: '1px solid rgba(8,145,178,0.4)', borderRadius: '12px', padding: '16px', boxShadow: '0 0 15px rgba(8,145,178,0.1)' }">
-
-               <div :style="{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }">
-                  <div :style="{ display: 'flex', alignItems: 'center', gap: '6px' }">
-                    <span :style="{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: subjectOf(s.memonic.id)?.color || '#555' }" />
-                    <span :style="{ fontSize: '10px', color: '#666', textTransform: 'uppercase', fontWeight: 600 }">{{ subjectOf(s.memonic.id)?.name || s.memonic.id }}</span>
-                  </div>
-                  <span :style="{ fontSize: '10px', color: '#0891b2', fontWeight: 700 }">score {{ s.score }}</span>
-               </div>
-
-               <div :style="{ fontSize: '14px', color: '#e8e8e8', fontWeight: 600, marginBottom: '16px', cursor: 'pointer' }" @click="select(s.memonic.sid)">
-                  {{ s.memonic.title }}
-               </div>
-
-               <button
-                  v-if="activeCard"
-                  @click.prevent="link(activeCard.sid, s.memonic.sid, linkTitleFor(activeCard, s.memonic))"
-                  :style="{ width: '100%', padding: '8px', backgroundColor: '#0891b2', color: '#000', border: 'none', borderRadius: '6px', fontSize: '12px', fontWeight: 700, cursor: 'pointer', transition: 'all 0.2s' }"
-                  onmouseover="this.style.backgroundColor='#22d3ee'; this.style.boxShadow='0 0 10px rgba(8,145,178,0.5)'"
-                  onmouseout="this.style.backgroundColor='#0891b2'; this.style.boxShadow='none'"
-                >Link</button>
-            </div>
-         </div>
-      </div>
-
-      <!-- ACTIVE LINKS -->
-      <div v-if="activeLinks && activeLinks.length > 0">
-         <h4 :style="{ fontSize: '10px', fontWeight: 700, color: '#666', letterSpacing: '0.1em', textTransform: 'uppercase', margin: '0 0 12px' }">This Card's Links</h4>
-         <div :style="{ display: 'flex', flexDirection: 'column', gap: '12px' }">
-            <div
-              v-for="l in activeLinks" :key="l.memonic?.sid ?? l.title"
-              :style="{
-                backgroundColor: '#121216',
-                borderRadius: '12px',
-                padding: '16px',
-                border: l.cross ? '1px solid #0891b2' : '1px solid #222',
-                boxShadow: l.cross ? '0 0 15px rgba(8,145,178,0.2)' : 'none'
-              }"
-            >
-               <div :style="{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }">
-                  <span :style="{ fontSize: '10px', color: '#666', textTransform: 'uppercase', fontWeight: 700, letterSpacing: '0.05em' }">{{ subjectOf(l.memonic?.id ?? "")?.name || l.memonic?.id || 'Unknown' }}</span>
-                  <span v-if="l.cross" :style="{ fontSize: '9px', fontWeight: 700, color: '#22d3ee', backgroundColor: 'rgba(8,145,178,0.2)', padding: '2px 6px', borderRadius: '4px', letterSpacing: '0.05em' }">CROSS-SUBJECT</span>
-               </div>
-
-               <div :style="{ fontSize: '14px', color: '#f0f0f0', fontWeight: 700, marginBottom: '16px', cursor: 'pointer' }" @click="l.memonic && select(l.memonic.sid)">
-                  {{ l.memonic?.title || 'Linked Card' }}
-               </div>
-
-               <div :style="{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }">
-                  <div :style="{ display: 'flex', alignItems: 'center', gap: '8px' }">
-                    <span :style="{ fontSize: '11px', color: '#666' }">via</span>
-                    <span :style="{ fontSize: '11px', color: '#22d3ee', backgroundColor: 'rgba(8,145,178,0.1)', padding: '2px 8px', borderRadius: '12px', border: '1px solid rgba(8,145,178,0.3)' }">#{{ l.title || 'manual' }}</span>
-                  </div>
-                  <button v-if="activeCard && l.memonic" @click.prevent="unlink(activeCard.sid, l.memonic.sid)" :style="{ background: 'transparent', border: 'none', color: '#666', fontSize: '11px', cursor: 'pointer', padding: 0 }">unlink ✕</button>
-               </div>
-            </div>
-         </div>
-      </div>
-
-      <p v-if="(!activeLinks || activeLinks.length === 0) && (!activeSuggestions || activeSuggestions.length === 0)" :style="{ fontSize: '12px', color: '#555', textAlign: 'center', padding: '24px 12px' }">
-         No links yet. Add tags to connect this card to other concepts.
-      </p>
+    <!-- Restrained Co-Pilot Quick Scaffolds -->
+    <div v-if="activeCard" class="panel-foot">
+      <button type="button" class="quick-btn" @click="openAsk('quiz')">
+        <Icon name="study" :size="12" />
+        <span>Quiz Me</span>
+      </button>
+      <button type="button" class="quick-btn" @click="openAsk('bridges')">
+        <Icon name="bridge" :size="12" />
+        <span>Find Bridges</span>
+      </button>
     </div>
   </aside>
 </template>
+
+<style scoped>
+.right-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background-color: var(--bg-panel);
+}
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  height: 46px;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--border-subtle);
+  flex-shrink: 0;
+}
+
+.head-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.panel-heading {
+  color: var(--text-secondary);
+}
+
+.count-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 19px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background-color: var(--bg-hover);
+  color: var(--text-primary);
+  font-size: 10.5px;
+  font-weight: 600;
+}
+
+.copilot-btn {
+  height: 26px;
+  padding: 0 9px;
+  font-size: 11.5px;
+  flex-shrink: 0;
+}
+
+.panel-body {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px;
+}
+
+.conn-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 2px;
+}
+
+.sec-count {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.card-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.conn-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-subtle);
+  background-color: var(--bg-surface);
+  transition: border-color var(--ease-fast);
+}
+
+.conn-card:hover {
+  border-color: var(--border-strong);
+}
+
+.conn-card.is-cross {
+  border-left: 2.5px solid var(--bridge);
+}
+
+.conn-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.meta-subj {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.subj-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+
+.score-pill {
+  font-size: 10.5px;
+  color: var(--accent);
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.bridge-badge {
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: var(--radius-xs);
+  background-color: var(--bridge-subtle);
+  color: var(--bridge);
+  flex-shrink: 0;
+}
+
+.conn-title {
+  border: none;
+  background: transparent;
+  padding: 0;
+  text-align: left;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.conn-title:hover {
+  color: var(--accent);
+}
+
+.shared-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.shared-tag {
+  font-size: 10.5px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background-color: var(--bridge-subtle);
+  color: var(--bridge);
+}
+
+.link-cta {
+  width: 100%;
+  height: 28px;
+  font-size: 11.5px;
+}
+
+.conn-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-top: 2px;
+}
+
+.edge-pill {
+  font-size: 11px;
+  padding: 2px 7px;
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--border-subtle);
+  background-color: var(--bg-input);
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.edge-pill.is-cross {
+  border-color: var(--bridge-border);
+  background-color: var(--bridge-subtle);
+  color: var(--bridge);
+}
+
+.unlink-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  padding: 0;
+  color: var(--text-muted);
+  cursor: pointer;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity var(--ease-fast), background-color var(--ease-fast), color var(--ease-fast);
+}
+
+.conn-card:hover .unlink-btn,
+.unlink-btn:focus-visible {
+  opacity: 1;
+}
+
+.unlink-btn:hover {
+  background-color: var(--danger-subtle);
+  color: var(--danger);
+}
+
+.empty-conn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 32px 12px;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.empty-heading {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.empty-desc {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-muted);
+}
+
+.panel-foot {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--border-subtle);
+  flex-shrink: 0;
+}
+
+.quick-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-default);
+  background-color: var(--bg-surface);
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color var(--ease-fast), color var(--ease-fast), border-color var(--ease-fast);
+}
+
+.quick-btn:hover {
+  background-color: var(--bg-hover);
+  border-color: var(--border-strong);
+  color: var(--text-primary);
+}
+</style>

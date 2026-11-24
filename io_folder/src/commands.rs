@@ -19,11 +19,13 @@ use std::collections::HashSet;
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use tauri::Manager;
 use tauri_plugin_opener::OpenerExt;
 
 const SERVICE: &str = "com.rakz.app"; // keychain namespace — match your identifier
 const KEY_USER: &str = "openrouter";  // one key slot for now
+static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
 
 // ---- shared: resolve and guard the mnemonics ROOT ----------------------
 
@@ -46,6 +48,9 @@ fn mnemonics_root(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 ///            choice); only the scanner resolves links — see walk().
 /// note:      read paths must never create folders; creation belongs to write only.
 fn safe_join(root: &Path, name: &str) -> Result<PathBuf, String> {
+    if name.contains('\\') || name.contains('\0') || name.contains(':') {
+        return Err("path escapes the mnemonics folder".into());
+    }
     let candidate = Path::new(name);
     let mut clean = root.to_path_buf();
     for part in candidate.components() {
@@ -58,6 +63,17 @@ fn safe_join(root: &Path, name: &str) -> Result<PathBuf, String> {
         return Err("empty file name".into());
     }
     Ok(clean)
+}
+
+fn is_openable_vault_file(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| {
+            e.eq_ignore_ascii_case("mns")
+                || e.eq_ignore_ascii_case("rkz")
+                || e.eq_ignore_ascii_case("txt")
+                || e.eq_ignore_ascii_case("json")
+        })
 }
 
 /// relative display name, '/' separator on every OS — matches @hir's '/'
@@ -85,21 +101,66 @@ pub async fn read_mns_file(app: tauri::AppHandle, name: String) -> Result<Option
     }
 }
 
+/// Atomic tmp-then-rename write with unique temp filenames and short retry on
+/// Windows sharing/access locks (Defender real-time scan, Search Indexer, OneDrive).
+fn atomic_write(path: &Path, bytes: &[u8], display_name: &str) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("cannot create folder: {e}"))?;
+    }
+    let seq = TMP_SEQ.fetch_add(1, Ordering::Relaxed);
+    let mut tmp_os = path.as_os_str().to_owned();
+    tmp_os.push(format!(".{}-{}.tmp", std::process::id(), seq));
+    let tmp = PathBuf::from(tmp_os);
+
+    if let Err(e) = fs::write(&tmp, bytes) {
+        let _ = fs::remove_file(&tmp);
+        return Err(format!("cannot write {display_name}: {e}"));
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        const DELAYS_MS: [u64; 6] = [15, 30, 60, 100, 150, 200];
+        let mut last_err = None;
+        for (attempt, delay) in std::iter::once(0u64).chain(DELAYS_MS).enumerate() {
+            if attempt > 0 {
+                std::thread::sleep(std::time::Duration::from_millis(delay));
+            }
+            match fs::rename(&tmp, path) {
+                Ok(()) => return Ok(()),
+                Err(e) => {
+                    let transient = e.kind() == ErrorKind::PermissionDenied
+                        || matches!(e.raw_os_error(), Some(5) | Some(32));
+                    last_err = Some(e);
+                    if !transient {
+                        break;
+                    }
+                }
+            }
+        }
+        let _ = fs::remove_file(&tmp);
+        return Err(format!(
+            "cannot finalize {display_name}: {}",
+            last_err.map(|e| e.to_string()).unwrap_or_default()
+        ));
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        if let Err(e) = fs::rename(&tmp, path) {
+            let _ = fs::remove_file(&tmp);
+            return Err(format!("cannot finalize {display_name}: {e}"));
+        }
+        Ok(())
+    }
+}
+
 /// purpose:   write a whole MNS file, atomically: tmp then rename.
 ///            a crash at any moment leaves the original untouched.
 ///            (atomic against process death — not fsync'd against power loss.)
 #[tauri::command]
 pub async fn write_mns_file(app: tauri::AppHandle, name: String, content: String) -> Result<(), String> {
     let path = safe_join(&mnemonics_root(&app)?, &name)?;
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|e| format!("cannot create folder: {e}"))?;
-    }
-    // tmp = full name + ".tmp"  (basics.mns → basics.mns.tmp, basics.rkz → basics.rkz.tmp)
-    let mut tmp_os = path.as_os_str().to_owned();
-    tmp_os.push(".tmp");
-    let tmp = PathBuf::from(tmp_os);
-    fs::write(&tmp, content.as_bytes()).map_err(|e| format!("cannot write {name}: {e}"))?;
-    fs::rename(&tmp, &path).map_err(|e| format!("cannot finalize {name}: {e}"))
+    atomic_write(&path, content.as_bytes(), &name)
 }
 
 /// purpose:   delete a file inside ROOT (engine confirms with the user first)
@@ -179,10 +240,11 @@ fn walk(
                 continue; // .git, .trash, sync folders
             }
             walk(&p, root, real_root, out, seen);
-        } else if matches!(
-            p.extension().and_then(|e| e.to_str()),
-            Some("mns") | Some("rkz")
-        ) {
+        } else if p
+            .extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| e.eq_ignore_ascii_case("mns") || e.eq_ignore_ascii_case("rkz"))
+        {
             let rel = rel_name(&p, root);
             // same law as directories: a file symlink must resolve inside ROOT
             match p.canonicalize() {
@@ -208,20 +270,40 @@ pub async fn open_root_folder(app: tauri::AppHandle) -> Result<(), String> {
         .map_err(|e| format!("cannot open folder: {e}"))
 }
 
-/// purpose:   open ONE vault file in the OS default editor.
-/// LOCAL ADDITION (not in upstream io_folder yet — clean PR candidate).
-/// Same sandbox law as the couriers: safe_join refuses `..`/absolute escapes,
-/// so TS can only ever point at files inside ROOT. Opens with the DEFAULT
-/// handler only — no custom programs, no arguments, no line flags.
+/// purpose:   open ONE vault text file in the OS default editor.
+/// Same sandbox law as the couriers: safe_join + canonicalize-inside-ROOT +
+/// strict text-extension allowlist (.mns/.rkz/.txt/.json) so executables can
+/// never be launched from the vault folder.
 #[tauri::command]
 pub async fn open_mns_file(app: tauri::AppHandle, name: String) -> Result<(), String> {
-    let path = safe_join(&mnemonics_root(&app)?, &name)?;
+    let root = mnemonics_root(&app)?;
+    let path = safe_join(&root, &name)?;
+    if !is_openable_vault_file(&path) {
+        return Err("only .mns, .rkz, .txt, and .json vault files can be opened".into());
+    }
     if !path.exists() {
         return Err(format!("{name} does not exist"));
     }
-    app.opener()
-        .open_path(path.to_string_lossy(), None::<&str>)
-        .map_err(|e| format!("cannot open {name}: {e}"))
+    let real_root = root
+        .canonicalize()
+        .map_err(|e| format!("cannot resolve root: {e}"))?;
+    let real_path = path
+        .canonicalize()
+        .map_err(|e| format!("cannot resolve {name}: {e}"))?;
+    if !real_path.starts_with(&real_root) {
+        return Err("path escapes the mnemonics folder".into());
+    }
+    let path_str = real_path.to_string_lossy();
+    match app.opener().open_path(path_str.as_ref(), None::<&str>) {
+        Ok(()) => Ok(()),
+        #[cfg(target_os = "windows")]
+        Err(_) => app
+            .opener()
+            .open_path(path_str.as_ref(), Some("notepad"))
+            .map_err(|e| format!("cannot open {name}: {e}")),
+        #[cfg(not(target_os = "windows"))]
+        Err(e) => Err(format!("cannot open {name}: {e}")),
+    }
 }
 
 // ---- the vault: secrets never touch files ------------------------------
@@ -287,6 +369,7 @@ pub async fn delete_secret() -> Result<(), String> {
 #[cfg(test)]
 mod verify {
     use super::*;
+    #[cfg(unix)]
     use std::os::unix::fs::{symlink, PermissionsExt};
 
     fn scan(root: &Path) -> ScanResult {
@@ -304,9 +387,34 @@ mod verify {
         assert!(safe_join(root, "bio/cells.mns").is_ok());
         assert!(safe_join(root, "../x").is_err());
         assert!(safe_join(root, "/etc/passwd").is_err());
+        assert!(safe_join(root, r"..\x").is_err());
+        assert!(safe_join(root, r"a\b.mns").is_err());
+        assert!(safe_join(root, "file.mns:ads").is_err());
+        assert!(safe_join(root, "bad\0name.mns").is_err());
         assert!(safe_join(root, "").is_err());
         assert!(safe_join(root, ".").is_err());
         assert!(safe_join(root, "a/../b").is_err());
+        assert!(is_openable_vault_file(Path::new("bio.mns")));
+        assert!(is_openable_vault_file(Path::new("BIO.RKZ")));
+        assert!(!is_openable_vault_file(Path::new("payload.exe")));
+        assert!(!is_openable_vault_file(Path::new("run.bat")));
+    }
+
+    #[test]
+    fn atomic_write_creates_and_overwrites_cleanly() {
+        let t = tempfile::tempdir().unwrap();
+        let target = t.path().join("nested").join("bio.mns");
+        atomic_write(&target, b"first", "nested/bio.mns").unwrap();
+        assert_eq!(fs::read_to_string(&target).unwrap(), "first");
+        atomic_write(&target, b"second", "nested/bio.mns").unwrap();
+        assert_eq!(fs::read_to_string(&target).unwrap(), "second");
+        // no leftover .tmp files
+        let leftovers: Vec<_> = fs::read_dir(target.parent().unwrap())
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().ends_with(".tmp"))
+            .collect();
+        assert!(leftovers.is_empty());
     }
 
     #[test]
@@ -315,12 +423,15 @@ mod verify {
         fs::write(t.path().join(".secret.mns"), "hidden file").unwrap();
         fs::create_dir(t.path().join(".git")).unwrap();
         fs::write(t.path().join(".git/x.mns"), "in hidden dir").unwrap();
+        fs::create_dir(t.path().join(".study")).unwrap();
+        fs::write(t.path().join(".study/reviews.json"), "{}").unwrap();
         let out = scan(t.path());
         let names: Vec<_> = out.files.iter().map(|(n, _)| n.as_str()).collect();
         assert_eq!(names, vec![".secret.mns"]);
     }
 
     // NEW LAW: a file symlink escaping ROOT is refused — named in failed, content withheld
+    #[cfg(unix)]
     #[test]
     fn escaping_file_symlink_is_refused_visibly() {
         let outside = tempfile::tempdir().unwrap();
@@ -334,6 +445,7 @@ mod verify {
     }
 
     // a file symlink INSIDE root still works (user's own organization)
+    #[cfg(unix)]
     #[test]
     fn internal_file_symlink_is_read() {
         let t = tempfile::tempdir().unwrap();
@@ -345,6 +457,7 @@ mod verify {
     }
 
     // broken symlink: canonicalize fails → named in failed
+    #[cfg(unix)]
     #[test]
     fn broken_symlink_lands_in_failed() {
         let t = tempfile::tempdir().unwrap();
@@ -355,6 +468,7 @@ mod verify {
     }
 
     // NEW LAW: an escaping dir symlink is refused visibly
+    #[cfg(unix)]
     #[test]
     fn escaping_dir_symlink_is_refused_visibly() {
         let outside = tempfile::tempdir().unwrap();
@@ -366,6 +480,7 @@ mod verify {
         assert_eq!(out.failed, vec!["door".to_string()]);
     }
 
+    #[cfg(unix)]
     #[test]
     fn symlink_cycle_terminates_silently() {
         let t = tempfile::tempdir().unwrap();
@@ -379,6 +494,7 @@ mod verify {
     }
 
     // NEW LAW: an unreadable directory is named in failed — nothing vanishes
+    #[cfg(unix)]
     #[test]
     fn unreadable_dir_lands_in_failed() {
         let t = tempfile::tempdir().unwrap();
@@ -392,6 +508,7 @@ mod verify {
         assert_eq!(out.failed, vec!["locked".to_string()]);
     }
 
+    #[cfg(unix)]
     #[test]
     fn unreadable_file_lands_in_failed() {
         let t = tempfile::tempdir().unwrap();
@@ -408,11 +525,13 @@ mod verify {
         let t = tempfile::tempdir().unwrap();
         fs::create_dir_all(t.path().join("bio/cells")).unwrap();
         fs::write(t.path().join("bio/cells/n.rkz"), "r").unwrap();
+        fs::write(t.path().join("bio/cells/UPPER.MNS"), "u").unwrap();
         fs::write(t.path().join("a.mns.tmp"), "leftover").unwrap();
         fs::write(t.path().join("b.txt"), "not ours").unwrap();
         let out = scan(t.path());
-        let names: Vec<_> = out.files.iter().map(|(n, _)| n.as_str()).collect();
-        assert_eq!(names, vec!["bio/cells/n.rkz"]);
+        let mut names: Vec<_> = out.files.iter().map(|(n, _)| n.as_str()).collect();
+        names.sort();
+        assert_eq!(names, vec!["bio/cells/UPPER.MNS", "bio/cells/n.rkz"]);
     }
 
     #[test]

@@ -1,36 +1,40 @@
 <script setup lang="ts">
-// Left sidebar: brand + search + tree + settings gear.
+// Left vault navigation rail: RAKZ emblem + creation actions + search + tree + study trigger + settings.
 
-// ========== 1. IMPORTS ==========
-import { ref } from "vue";
+import { nextTick, ref, watch } from "vue";
 import TreeView from "@/components/tree/TreeView.vue";
 import Dialog from "@/components/ui/Dialog.vue";
+import Icon from "@/components/ui/Icon.vue";
 import { useLibrary } from "@/composables/library";
 
-// ========== 2. TYPES ==========
-// (none)
+defineProps<{ activeView?: string }>();
 
-// ========== 3. CONSTANTS ==========
-// (none)
+const emit = defineEmits<{
+  "open-settings": [];
+  "open-study": [];
+  "select-card": [];
+}>();
 
-// ========== 4. STATE ==========
-const emit = defineEmits<{ "open-settings": [] }>();
 const query = ref("");
+const { create, studyStats } = useLibrary();
 
-const { create } = useLibrary();
-
-// "New Subject / Folder" dialog — the only way to start a NEW subject, and
-// where folders are born (a folder is just a card path; disk follows on save).
 const newOpen = ref(false);
 const newSubject = ref("");
 const newFolder = ref("");
+const subjectInput = ref<HTMLInputElement | null>(null);
 
-// ========== 5. LOGIC ==========
+watch(newOpen, async (open) => {
+  if (open) {
+    await nextTick();
+    subjectInput.value?.focus();
+  }
+});
 
-// ----- createSubject -----
-// purpose:   create the subject's first card (optionally inside a typed folder) and close the dialog
-// io:        in → none | out → none (no-op when the name is blank)
-// processes: create                                                        [auto]
+function createCard(): void {
+  create();
+  emit("select-card");
+}
+
 function createSubject(): void {
   const s = newSubject.value.trim();
   if (!s) return;
@@ -38,84 +42,144 @@ function createSubject(): void {
   newOpen.value = false;
   newSubject.value = "";
   newFolder.value = "";
+  emit("select-card");
 }
 </script>
 
 <template>
-  <aside class="flex h-full flex-col border-r border-[#161618] bg-[#0B0B0D]">
-    <div class="border-b border-[#161618] px-4 pb-4 pt-4">
-
-      <!-- Brand & Version -->
-      <div class="mb-5 flex items-center gap-2.5">
-        <span class="h-5 w-5 rounded-md" style="background: var(--accent)" />
-        <span class="text-[#f0f0f0]" :style="{ fontSize: '16px', fontWeight: 700, letterSpacing: '0.14em' }">RAKZ</span>
-        <span class="rounded border border-[#222] bg-[#161618] px-1.5 py-0.5 text-[10px] font-bold text-gray-500">v0.1.0</span>
+  <aside class="sidebar select-none">
+    <!-- Brand & Quick Actions -->
+    <div class="sidebar-head">
+      <div class="brand-row">
+        <img src="/Image.svg" alt="" class="brand-logo" width="22" height="22" />
+        <span class="brand-name">RAKZ</span>
+        <span class="brand-ver font-mono-meta">v0.1</span>
       </div>
 
-      <!-- Add New Mnemonic Button (Wired to Engine) -->
-      <button
-        @click="create()"
-        class="mb-2 flex w-full cursor-pointer items-center justify-center gap-2 rounded-lg border border-cyan-800/40 bg-transparent py-2 text-[13px] font-semibold text-cyan-400 transition-all hover:bg-cyan-900/20 hover:border-cyan-600/60"
-      >
-        <span class="text-[16px] leading-none">+</span> New Mnemonic
-      </button>
-
-      <button
-        @click="newOpen = true"
-        class="mb-4 flex w-full cursor-pointer items-center justify-center gap-2 rounded-lg border border-[#222] bg-transparent py-1.5 text-[12px] text-gray-500 transition-all hover:text-gray-300 hover:border-[#333]"
-      >
-        <span class="text-[14px] leading-none">⊞</span> New Subject / Folder…
-      </button>
+      <div class="action-row">
+        <button
+          type="button"
+          class="rkz-btn rkz-btn-primary flex-1"
+          title="Create new mnemonic (Ctrl+N)"
+          @click="createCard"
+        >
+          <Icon name="plus" :size="14" />
+          <span>New Mnemonic</span>
+        </button>
+        <button
+          type="button"
+          class="rkz-btn icon-only"
+          title="New Subject or Folder…"
+          aria-label="New Subject or Folder"
+          @click="newOpen = true"
+        >
+          <Icon name="folder-plus" :size="15" />
+        </button>
+      </div>
 
       <!-- Search -->
-      <div class="relative">
-        <span class="absolute left-3 top-1/2 -translate-y-1/2 text-[13px] text-gray-500">⌕</span>
+      <div class="search-wrap">
+        <Icon name="search" :size="13" class="search-icon" />
         <input
           id="rkz-search"
           v-model="query"
-          placeholder="Search memonics…"
-          class="w-full rounded-lg border border-[#222] bg-[#0F0F12] py-2 pl-[32px] pr-3 text-[13px] text-[#e8e8e8] outline-none transition-colors focus:border-cyan-800/50 placeholder-gray-600"
+          dir="auto"
+          placeholder="Search vault…"
+          aria-label="Search mnemonics"
+          class="rkz-input search-input"
+          @keydown.esc="query = ''"
         />
+        <button
+          v-if="query"
+          type="button"
+          class="search-clear"
+          title="Clear search"
+          @click="query = ''"
+        >
+          <Icon name="x" :size="11" />
+        </button>
+        <kbd v-else class="rkz-kbd search-kbd">Ctrl K</kbd>
       </div>
     </div>
 
-    <div class="flex-1 overflow-y-auto custom-scrollbar">
-      <TreeView :query="query" />
+    <!-- Vault Explorer -->
+    <div class="tree-scroll rkz-scroll">
+      <TreeView :query="query" @clear-query="query = ''" @card-opened="emit('select-card')" />
     </div>
 
-    <div class="border-t border-[#161618] px-3 py-2.5">
+    <!-- Footer: Study queue trigger + Settings -->
+    <div class="sidebar-foot">
       <button
-        class="flex w-full cursor-pointer items-center gap-2.5 border-0 bg-transparent px-1 py-1.5 text-[13px] text-[#9A9AA2] hover:text-white transition-colors"
+        v-if="studyStats.dueCount > 0"
+        type="button"
+        class="study-banner"
+        :class="{ 'is-active': activeView === 'study' }"
+        title="Start Active Recall Review (Ctrl+2)"
+        @click="emit('open-study')"
+      >
+        <Icon name="study" :size="14" />
+        <span class="flex-1 text-left">Review due</span>
+        <span class="study-count tabular">{{ studyStats.dueCount }}</span>
+      </button>
+
+      <button
+        type="button"
+        class="foot-btn"
+        title="Settings (Ctrl+,)"
         @click="emit('open-settings')"
       >
-        <span class="text-[15px]">⚙</span> Settings
+        <Icon name="settings" :size="14" />
+        <span class="flex-1 text-left">Settings</span>
+        <kbd class="rkz-kbd">Ctrl ,</kbd>
       </button>
     </div>
 
-    <Dialog :open="newOpen" width="440px" @close="newOpen = false">
-      <div class="flex flex-col gap-3 p-6">
-        <h3 class="m-0 text-[#f0f0f0]" :style="{ fontSize: '15px', fontWeight: 700 }">New Subject</h3>
-        <input
-          v-model="newSubject"
-          placeholder="Subject name — e.g. Physics"
-          class="w-full rounded-lg border border-[#222] bg-[#0F0F12] px-3 py-2 text-[13px] text-[#e8e8e8] outline-none focus:border-cyan-800/50"
-          @keydown.enter="createSubject"
-        />
-        <input
-          v-model="newFolder"
-          placeholder="Folder (optional) — e.g. science/physics"
-          class="w-full rounded-lg border border-[#222] bg-[#0F0F12] px-3 py-2 text-[12px] text-[#9A9AA2] outline-none focus:border-cyan-800/50"
-          :style="{ fontFamily: 'JetBrains Mono, monospace' }"
-          @keydown.enter="createSubject"
-        />
-        <p class="m-0 text-gray-600" :style="{ fontSize: '11px' }">The subject's first card is created for you; its .mns file (and folders) appear in the vault on the next save.</p>
-        <div class="flex justify-end gap-2 pt-1">
-          <button class="cursor-pointer rounded-md border border-[#2C2C2C] bg-transparent px-3 py-1.5 text-[12px] text-[#9A9AA2]" @click="newOpen = false">Cancel</button>
+    <!-- New Subject / Folder Dialog -->
+    <Dialog :open="newOpen" width="420px" @close="newOpen = false">
+      <div class="modal-body">
+        <div class="modal-head">
+          <h3 class="modal-title">New Subject or Folder</h3>
+          <button type="button" class="close-btn" aria-label="Close" @click="newOpen = false">
+            <Icon name="x" :size="14" />
+          </button>
+        </div>
+
+        <label class="field">
+          <span class="rkz-label">Subject Name</span>
+          <input
+            ref="subjectInput"
+            v-model="newSubject"
+            dir="auto"
+            placeholder="e.g. Physics, Biology, الفيزياء"
+            class="rkz-input field-input"
+            @keydown.enter="createSubject"
+          />
+        </label>
+
+        <label class="field">
+          <span class="rkz-label">Folder Path (optional)</span>
+          <input
+            v-model="newFolder"
+            placeholder="e.g. science/physics"
+            class="rkz-input field-input font-mono-meta"
+            @keydown.enter="createSubject"
+          />
+        </label>
+
+        <p class="modal-hint">
+          Creates the subject's first mnemonic card. Its <code class="font-mono-meta">.mns</code> file and folders are written locally on save.
+        </p>
+
+        <div class="modal-actions">
+          <button type="button" class="rkz-btn" @click="newOpen = false">Cancel</button>
           <button
-            class="cursor-pointer rounded-md border-0 px-3 py-1.5 text-[12px] font-bold"
-            :style="{ backgroundColor: newSubject.trim() ? '#0891b2' : '#1E1E22', color: newSubject.trim() ? '#000' : '#555', cursor: newSubject.trim() ? 'pointer' : 'default' }"
+            type="button"
+            class="rkz-btn rkz-btn-primary"
+            :disabled="!newSubject.trim()"
             @click="createSubject"
-          >Create</button>
+          >
+            Create Subject
+          </button>
         </div>
       </div>
     </Dialog>
@@ -123,8 +187,230 @@ function createSubject(): void {
 </template>
 
 <style scoped>
-.custom-scrollbar::-webkit-scrollbar { width: 4px; }
-.custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
-.custom-scrollbar::-webkit-scrollbar-thumb { background-color: #1E1E22; border-radius: 10px; }
-.custom-scrollbar:hover::-webkit-scrollbar-thumb { background-color: #2C2C30; }
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background-color: var(--bg-sidebar);
+}
+
+.sidebar-head {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 12px 10px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.brand-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 2px;
+}
+
+.brand-logo {
+  border-radius: 5px;
+  display: block;
+}
+
+.brand-name {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  color: var(--text-primary);
+}
+
+.brand-ver {
+  margin-left: auto;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--border-subtle);
+  background-color: var(--bg-input);
+  color: var(--text-muted);
+}
+
+.action-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.icon-only {
+  width: 30px;
+  padding: 0;
+  flex-shrink: 0;
+}
+
+.search-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.search-icon {
+  position: absolute;
+  left: 9px;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.search-input {
+  height: 30px;
+  padding: 0 54px 0 28px;
+  font-size: 12px;
+}
+
+.search-kbd {
+  position: absolute;
+  right: 5px;
+  pointer-events: none;
+}
+
+.search-clear {
+  position: absolute;
+  right: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.search-clear:hover {
+  background-color: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.tree-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px 0;
+}
+
+.sidebar-foot {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.study-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--bridge-border);
+  background-color: var(--bridge-subtle);
+  color: var(--bridge);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color var(--ease-fast), color var(--ease-fast);
+}
+
+.study-banner:hover,
+.study-banner.is-active {
+  background-color: var(--bridge);
+  color: #ffffff;
+}
+
+.study-count {
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.foot-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 30px;
+  padding: 0 8px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color var(--ease-fast), color var(--ease-fast);
+}
+
+.foot-btn:hover {
+  background-color: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 20px;
+}
+
+.modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.modal-title {
+  margin: 0;
+  font-size: 14.5px;
+  font-weight: 600;
+}
+
+.close-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.close-btn:hover {
+  background-color: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.field-input {
+  height: 34px;
+  padding: 0 10px;
+}
+
+.modal-hint {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 4px;
+}
 </style>

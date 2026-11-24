@@ -1,46 +1,33 @@
 <script setup lang="ts">
-// Hashtag token input. Emits the full next array on change; the card routes it
-// through useLibrary.setTags (which diffs and calls addTag/removeTag on the engine).
-// A tag that also lives on a card in ANOTHER subject (different engine `id`) glows.
+// Hashtag token input. Tags shared with ANOTHER subject surface as warm
+// terracotta bridge indicators instead of neon glow pills.
 
-// ========== 1. IMPORTS ==========
 import { ref } from "vue";
-import { mix } from "@/lib/utils";
 import { useLibrary } from "@/composables/library";
+import Icon from "@/components/ui/Icon.vue";
 
-// ========== 2. TYPES ==========
-// (props declared via runtime declaration below)
+const props = withDefaults(
+  defineProps<{
+    modelValue: string[];
+    activeSubjectId?: string;
+  }>(),
+  { activeSubjectId: "" },
+);
 
-// ========== 3. CONSTANTS ==========
-// (none)
-
-// ========== 4. STATE ==========
-const props = defineProps({
-  modelValue: { type: Array as () => string[], required: true },  // string[]
-  activeSubjectId: { type: String, default: "" },                 // engine `id` of the card's subject
-});
 const emit = defineEmits<{ "update:modelValue": [tags: string[]] }>();
 
 const { memonics } = useLibrary();
 const draft = ref("");
 
-// ========== 5. LOGIC ==========
-
-// ----- isCross -----
-// purpose:   does this tag also appear on a card in a DIFFERENT subject? (the glow rule)
-// io:        in → t (string) | out → boolean
-// processes: none                                                        [auto]
 function isCross(t: string): boolean {
   return (
     !!props.activeSubjectId &&
-    memonics.value.some((m) => m.id !== props.activeSubjectId && m.tags.some((x) => x.toLowerCase() === t.toLowerCase()))
+    memonics.value.some(
+      (m) => m.id !== props.activeSubjectId && m.tags.some((x) => x.toLowerCase() === t.toLowerCase()),
+    )
   );
 }
 
-// ----- add -----
-// purpose:   clean one raw token (#/commas stripped) and append it case-insensitively unique
-// io:        in → raw (string) | out → none (emits the next array; clears draft)
-// processes: none                                                        [auto]
 function add(raw: string): void {
   const clean = raw.trim().replace(/^#/, "").replace(/,/g, "");
   if (clean && !props.modelValue.some((x) => x.toLowerCase() === clean.toLowerCase())) {
@@ -49,18 +36,10 @@ function add(raw: string): void {
   draft.value = "";
 }
 
-// ----- remove -----
-// purpose:   drop one exact tag from the array
-// io:        in → t (string) | out → none
-// processes: none                                                        [auto]
 function remove(t: string): void {
   emit("update:modelValue", props.modelValue.filter((x) => x !== t));
 }
 
-// ----- onKeydown -----
-// purpose:   Enter/comma commits the draft; Backspace on an empty draft removes the last tag
-// io:        in → e (KeyboardEvent) | out → none
-// processes: add, remove                                                  [auto]
 function onKeydown(e: KeyboardEvent): void {
   if (e.key === "Enter" || e.key === ",") {
     e.preventDefault();
@@ -72,34 +51,112 @@ function onKeydown(e: KeyboardEvent): void {
 </script>
 
 <template>
-  <div class="flex min-h-[44px] flex-wrap items-center gap-2 rounded-lg border border-[#2C2C2C] bg-[#0F0F12] px-3 py-2">
+  <div class="tag-well">
     <span
       v-for="t in modelValue"
       :key="t"
-      class="inline-flex items-center gap-1.5 rounded-full py-1 pl-3 pr-1"
-      :style="{
-        fontSize: '14px', fontWeight: 500, fontFamily: 'JetBrains Mono, monospace', color: 'var(--accent)',
-        backgroundColor: mix(12),
-        border: isCross(t) ? '1px solid var(--accent)' : `1px solid ${mix(28)}`,
-        boxShadow: isCross(t) ? `0 0 12px ${mix(45)}` : 'none',
-      }"
+      class="tag-chip font-mono-meta"
+      :class="{ 'is-bridge': isCross(t) }"
+      :title="isCross(t) ? 'Shared across subjects — structural bridge tag' : `#${t}`"
     >
-      #{{ t }}
+      <Icon v-if="isCross(t)" name="bridge" :size="11" />
+      <span>#{{ t }}</span>
       <button
         type="button"
         title="Remove tag"
-        class="flex h-[18px] w-[18px] items-center justify-center rounded-full border-0"
-        :style="{ backgroundColor: mix(22), color: 'var(--accent)', cursor: 'pointer', padding: 0 }"
+        aria-label="Remove tag"
+        class="tag-remove"
         @click="remove(t)"
-      >✕</button>
+      >
+        <Icon name="x" :size="10" />
+      </button>
     </span>
+
     <input
       v-model="draft"
-      :placeholder="modelValue.length ? 'Add tag…' : 'Type a tag and press Enter…'"
-      class="min-w-[120px] flex-1 border-0 bg-transparent text-[#C8C8C8] outline-none"
-      :style="{ fontSize: '14px', fontWeight: 500, fontFamily: 'JetBrains Mono, monospace' }"
+      :placeholder="modelValue.length ? 'Add tag…' : 'Type a #concept tag and press Enter…'"
+      class="tag-input font-mono-meta"
       @keydown="onKeydown"
       @blur="draft && add(draft)"
     />
   </div>
 </template>
+
+<style scoped>
+.tag-well {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-height: 38px;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-default);
+  background-color: var(--bg-input);
+  transition: border-color var(--ease-fast), box-shadow var(--ease-fast);
+}
+
+.tag-well:focus-within {
+  border-color: var(--accent-border);
+  box-shadow: 0 0 0 2px var(--accent-subtle);
+}
+
+.tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 4px 0 8px;
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--border-default);
+  background-color: var(--bg-surface);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.tag-chip.is-bridge {
+  border-color: var(--bridge-border);
+  background-color: var(--bridge-subtle);
+  color: var(--bridge);
+}
+
+.tag-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: currentColor;
+  opacity: 0.65;
+  cursor: pointer;
+  transition: opacity var(--ease-fast), background-color var(--ease-fast);
+}
+
+.tag-remove:hover {
+  opacity: 1;
+  background-color: var(--bg-hover);
+}
+
+.tag-input {
+  flex: 1;
+  min-width: 120px;
+  height: 24px;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 12px;
+  outline: none;
+}
+
+.tag-input:focus-visible {
+  box-shadow: none;
+}
+
+.tag-input::placeholder {
+  color: var(--text-muted);
+}
+</style>

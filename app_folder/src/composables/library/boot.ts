@@ -10,6 +10,7 @@ import { appDataDir, join } from "@tauri-apps/api/path";
 import { invoke } from "@tauri-apps/api/core";
 
 import { createMnemonic } from "@engine/mnemonic-action";
+import { addLink } from "@engine/link-engine";
 import { fromParsedFiles } from "@engine/bridge";
 import { getAllMemonics, importDocument } from "@engine/memory-store";
 
@@ -18,17 +19,59 @@ import {
 } from "./state";
 import { saveNow, schedulePersist, trackManagedFile, wireFromText } from "./persistence";
 import { applySettings, loadColors } from "./settings";
+import { loadStudyStore, persistStudyStore, seedDeepRootsIfEmpty } from "./study";
 
 // ========== 2. TYPES ==========
 // (none)
 
 // ========== 3. CONSTANTS ==========
 // Seed cards used ONLY when the vault boots empty (first run / browser).
+// Demonstrates the Islands -> Bridges -> Mother Paradigm model immediately:
+// Biology <-> Chemistry starts bridged (#osmosis), Physics surfaces as a live
+// cross-subject bridge suggestion (#concentration, #membrane), and Java OOP
+// shows up as an Isolated Island waiting to be connected.
 const SEED = [
-  { id: "Biology", type: "Fact", title: "The cell drinks where it's crowded.", context: "Osmosis moves water from low to high solute concentration across a semi-permeable membrane.", importance: 4, status: "active", tags: ["concentration", "membrane", "osmosis"] },
-  { id: "Chemistry", type: "Fact", title: "Osmotic Pressure", context: "π = iMRT — a colligative property depending on solute concentration.", importance: 4, status: "active", tags: ["concentration", "membrane", "osmosis", "pressure"] },
-  { id: "Java OOP", type: "Rule", title: "Polymorphism is many forms", context: "One interface, many implementations — a call behaves differently by runtime type.", importance: 4, status: "active", tags: ["interface", "override"] },
-] satisfies { id: string; type: string; title: string; context: string; importance: number; status: string; tags: string[] }[];
+  {
+    id: "Biology",
+    type: "Fact",
+    title: "The cell drinks where it's crowded.",
+    context: "Osmosis moves water from low to high solute concentration across a semi-permeable membrane until water potential balances.",
+    deepRoots: "Thermodynamic origin: water moves down its chemical potential gradient. Solute particles lower free water activity, so net solvent flux increases total entropy across the membrane.",
+    importance: 4,
+    status: "active",
+    tags: ["concentration", "membrane", "osmosis", "gradient"],
+  },
+  {
+    id: "Chemistry",
+    type: "Fact",
+    title: "Osmotic Pressure (π = iMRT)",
+    context: "A colligative property depending on solute particle count (iM), temperature (T), and gas constant (R) — not solute identity.",
+    deepRoots: "Jacobus van 't Hoff (1887) proved dilute solutes exert osmotic pressure mathematically identical to ideal-gas pressure (PV = nRT), earning the first Nobel Prize in Chemistry.",
+    importance: 4,
+    status: "active",
+    tags: ["concentration", "membrane", "osmosis", "pressure"],
+  },
+  {
+    id: "Physics",
+    type: "Rule",
+    title: "Fick's Law: Flux follows the steepest gradient",
+    context: "J = −D · (dC/dx) — net molecular diffusion flows from high to low concentration proportionally to diffusivity D and gradient steepness.",
+    deepRoots: "Adolf Fick (1855) derived diffusion by direct analogy to Fourier's heat conduction and Ohm's law (flux = conductance × driving gradient); Einstein (1905) linked D to microscopic Brownian random walks.",
+    importance: 4,
+    status: "active",
+    tags: ["concentration", "gradient", "membrane", "diffusion"],
+  },
+  {
+    id: "Java OOP",
+    type: "Rule",
+    title: "Polymorphism is many forms",
+    context: "One interface, many implementations — the same method call dispatches dynamically based on the object's runtime type.",
+    deepRoots: "Separating 'what' (interface contract) from 'how' (implementation) enables open-closed extension: new classes plug into existing callers without rewriting dispatch logic.",
+    importance: 4,
+    status: "active",
+    tags: ["interface", "override"],
+  },
+] satisfies { id: string; type: string; title: string; context: string; deepRoots: string; importance: number; status: string; tags: string[] }[];
 
 // ========== 4. STATE ==========
 let booted = false;
@@ -98,13 +141,36 @@ export async function load(): Promise<void> {
     }
     // 3d. flush pending edits when the window loses visibility / closes
     document.addEventListener("visibilitychange", () => {
-      if (document.visibilityState === "hidden") void saveNow();
+      if (document.visibilityState === "hidden") {
+        void saveNow();
+        void persistStudyStore();
+      }
     });
   }
 
-  // 4. first run (or browser): seed a starter vault
+  await loadStudyStore();
+
+  // 4. first run (or browser): seed a starter vault with 1 live cross-subject bridge
+  //    (Biology <-> Chemistry) so new users see bridges, suggestions, and islands immediately.
   if (getAllMemonics().length === 0) {
-    for (const s of SEED) createMnemonic({ ...s, hierarchy: "" });
+    const createdSids: number[] = [];
+    for (const s of SEED) {
+      const { memonic } = createMnemonic({
+        id: s.id,
+        type: s.type,
+        title: s.title,
+        context: s.context,
+        importance: s.importance,
+        status: s.status,
+        tags: [...s.tags],
+        hierarchy: "",
+      });
+      createdSids.push(memonic.sid);
+    }
+    if (createdSids.length >= 2) {
+      addLink(createdSids[0]!, createdSids[1]!, "osmosis");
+    }
+    seedDeepRootsIfEmpty(SEED.map((s) => ({ id: s.id, title: s.title, deepRoots: s.deepRoots })));
   }
   // 5. heal vaults doubled by old sync bugs, then publish the mirror
   const healed = dedupeExactClones();

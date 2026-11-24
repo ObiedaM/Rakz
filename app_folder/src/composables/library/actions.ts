@@ -19,6 +19,7 @@ import {
 } from "./state";
 import { schedulePersist, saveNow, openVaultFolder, wireFromText } from "./persistence";
 import { downloadBlob } from "./settings";
+import { migrateStudyKey } from "./study";
 
 // ========== 2. TYPES ==========
 // (none)
@@ -54,8 +55,8 @@ export function create(subjectId?: string, hierarchy?: string): number {
     : (memonics.value.find((m) => m.id === id)?.hierarchy ?? "");
   // 3. mint the card through the engine, publish, activate, schedule save
   const { memonic } = createMnemonic({
-    id, type: "Fact", title: "Untitled memonic",
-    context: "Write your explanation here.", importance: 0, status: "active", hierarchy: hir, tags: [],
+    id, type: "Fact", title: "Untitled mnemonic",
+    context: "", importance: 0, status: "active", hierarchy: hir, tags: [],
   });
   refresh();
   activeSid.value = memonic.sid;
@@ -69,7 +70,13 @@ export function create(subjectId?: string, hierarchy?: string): number {
 // io:        in → sid (number), field (string), value (unknown) | out → none
 // processes: editMnemonic, refresh, refreshSuggestions, schedulePersist     [auto]
 export function editField(sid: number, field: string, value: unknown): void {
+  const before = field === "title" || field === "id" ? getMemonicBySid(sid) : undefined;
+  const prevKeySnapshot = before ? { id: before.id, title: before.title } : null;
   editMnemonic(sid, { [field]: value } as Parameters<typeof editMnemonic>[1]);
+  if (prevKeySnapshot) {
+    const after = getMemonicBySid(sid);
+    if (after) migrateStudyKey(prevKeySnapshot, { id: after.id, title: after.title });
+  }
   refresh();
   if (sid === activeSid.value) refreshSuggestions();
   schedulePersist();

@@ -1,442 +1,1091 @@
 <script setup lang="ts">
-// Settings modal — General / Appearance / Data & Storage / Shortcuts.
-// Color wheel sits ABOVE the swatch grid (Appearance). I/O lives in Data & Storage.
+// Settings modal — Appearance (Theme + Subject Colors), AI Co-Pilot, Data & Storage, Shortcuts, General.
 
-// ========== 1. IMPORTS ==========
 import { computed, onMounted, ref } from "vue";
-import { mix, SWATCHES } from "@/lib/utils";
+import { SWATCHES } from "@/lib/utils";
 import Dialog from "@/components/ui/Dialog.vue";
 import ColorWheel from "@/components/ui/ColorWheel.vue";
 import KitDropZone from "@/components/ui/KitDropZone.vue";
+import ConfirmButton from "@/components/ui/ConfirmButton.vue";
+import Icon from "@/components/ui/Icon.vue";
 import { useLibrary } from "@/composables/library";
 import { useAgent } from "@/composables/useAgent";
 
-// ========== 2. TYPES ==========
-// (props declared via runtime declaration below)
+type TabId = "Appearance" | "AI" | "Data & Storage" | "Shortcuts" | "General";
 
-// ========== 3. CONSTANTS ==========
-const TABS = ["General", "Appearance", "AI", "Data & Storage", "Shortcuts"];
-
-const SHORTCUTS = [
-  { keys: "⌘/Ctrl N", label: "New memonic" },
-  { keys: "⌘/Ctrl K", label: "Focus search" },
-  { keys: "⌘/Ctrl G", label: "Cycle view (Stack → Graph → Grid)" },
-  { keys: "⌘/Ctrl .", label: "Zen Mode" },
-  { keys: "⌘/Ctrl S", label: "Save vault now" },
+const TABS: { id: TabId; icon: "palette" | "sparkles" | "database" | "keyboard" | "info" }[] = [
+  { id: "Appearance", icon: "palette" },
+  { id: "AI", icon: "sparkles" },
+  { id: "Data & Storage", icon: "database" },
+  { id: "Shortcuts", icon: "keyboard" },
+  { id: "General", icon: "info" },
 ];
 
-// ========== 4. STATE ==========
-defineProps({ open: { type: Boolean, default: false } });
+const SHORTCUTS = [
+  { keys: "Ctrl+N", label: "New mnemonic card" },
+  { keys: "Ctrl+K", label: "Search vault" },
+  { keys: "Ctrl+1 / 2 / 3 / 4", label: "Switch Stack / Study / Grid / Graph" },
+  { keys: "Ctrl+G", label: "Cycle workspace views" },
+  { keys: "Ctrl+J", label: "Open Study Co-Pilot" },
+  { keys: "Ctrl+.", label: "Toggle Zen focus mode" },
+  { keys: "Ctrl+S", label: "Flush vault to disk now" },
+  { keys: "Ctrl+,", label: "Open Settings" },
+  { keys: "Alt+← / →", label: "Previous / next card in subject" },
+  { keys: "Space · 1–4", label: "Reveal & grade in Study Mode" },
+  { keys: "Esc", label: "Cancel armed delete / close dialog / exit Zen" },
+];
+
+defineProps<{ open?: boolean }>();
 const emit = defineEmits<{ close: [] }>();
 
-const { subjects, activeSubject, setSubjectColor, exportVault, importVault, vaultPath, openVaultFolder, isDesktop, vaultStats, estimateVaultBytes, exportSettings, importSettings, lastImportFailed, clearImportFailure } = useLibrary();
+const {
+  subjects,
+  activeSubject,
+  setSubjectColor,
+  exportVault,
+  importVault,
+  vaultPath,
+  openVaultFolder,
+  isDesktop,
+  vaultStats,
+  studyStats,
+  estimateVaultBytes,
+  exportSettings,
+  importSettings,
+  lastImportFailed,
+  clearImportFailure,
+  theme,
+  setTheme,
+} = useLibrary();
 
-const tab = ref("Appearance");
+const tab = ref<TabId>("Appearance");
 
-// Reactive size label: vaultStats read forces recompute after any mutation.
 const sizeLabel = computed(() => {
   void vaultStats.value;
   const b = estimateVaultBytes();
-  return b >= 1048576 ? (b / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(b / 1024)) + " KB";
+  return b >= 1048576 ? `${(b / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1024))} KB`;
 });
 
-// Which subject's color we're editing (defaults to the active card's subject).
 const editId = ref<string | null>(null);
 
-// ── AI tab state ──
 const {
-  keyStatus, keychainError, models, model, busy, error: agentError,
-  storeKey, removeKey, refreshKeyStatus, refreshModels, setModel, testConnection,
+  keyStatus,
+  keychainError,
+  models,
+  model,
+  busy,
+  error: agentError,
+  storeKey,
+  removeKey,
+  refreshKeyStatus,
+  refreshModels,
+  setModel,
+  testConnection,
 } = useAgent();
 
-const keyValue = ref("");           // the input — cleared right after save, never echoed back
-const keySavedFlash = ref(false);   // "Saved ✓" flash (the key itself is NEVER shown)
-const confirmRemove = ref(false);   // two-step arm→confirm for Remove key
+const keyValue = ref("");
+const keySavedFlash = ref(false);
+const sessionFlash = ref(false);
 const testing = ref(false);
-const testResult = ref("");         // "" | "OK ✓" | the error message
-const sessionFlash = ref(false);    // "session key stored" flash for the fallback path
-const modelQuery = ref("");         // search filter for the model picker
-const freeOnly = ref(false);        // quick toggle: show only free models
+const testResult = ref<{ ok: boolean; text: string } | null>(null);
+const modelQuery = ref("");
+const freeOnly = ref(false);
 
 onMounted(() => {
   void refreshKeyStatus();
   void refreshModels();
 });
 
-// ========== 5. LOGIC ==========
-
-// ----- targetId -----
-// purpose:   which subject the Appearance tab edits — explicitly picked, else the active card's
-// io:        in → none | out → string | undefined
-// processes: none                                                        [auto]
 function targetId(): string | undefined {
   return editId.value ?? activeSubject.value?.id;
 }
 
-// ----- colorOf -----
-// purpose:   the current color of the edit target
-// io:        in → none | out → string (hex)
-// processes: none                                                        [auto]
 function colorOf(): string {
-  return subjects.value.find((s) => s.id === targetId())?.color || "#00E5FF";
+  return subjects.value.find((s) => s.id === targetId())?.color || "#5B82F6";
 }
 
-// ----- saveApiKey -----
-// purpose:   persist the typed key (keychain, or session RAM when unavailable) and clear the input immediately — the value is never kept anywhere else
-// io:        in → none | out → none
-// processes: storeKey, refreshModels                                     [auto]
 async function saveApiKey(): Promise<void> {
   if (!keyValue.value.trim()) return;
   const wasUnavailable = keyStatus.value === "unavailable";
   await storeKey(keyValue.value);
-  keyValue.value = "";              // never echo the key back
+  keyValue.value = "";
   if (wasUnavailable) {
     sessionFlash.value = true;
-    setTimeout(() => (sessionFlash.value = false), 4000);
+    setTimeout(() => (sessionFlash.value = false), 4500);
   } else {
     keySavedFlash.value = true;
-    setTimeout(() => (keySavedFlash.value = false), 2000);
+    setTimeout(() => (keySavedFlash.value = false), 2200);
   }
   void refreshModels();
 }
 
-// ----- removeApiKey -----
-// purpose:   two-step remove — first click arms (3s auto-disarm), second click deletes the key
-// io:        in → none | out → none
-// processes: removeKey                                                   [auto]
-async function removeApiKey(): Promise<void> {
-  if (!confirmRemove.value) {
-    confirmRemove.value = true;
-    setTimeout(() => (confirmRemove.value = false), 3000);
-    return;
-  }
-  confirmRemove.value = false;
+async function handleRemoveKey(): Promise<void> {
   await removeKey();
-  testResult.value = "";
+  testResult.value = null;
 }
 
-// ----- runTest -----
-// purpose:   one-round-trip health check — show "OK ✓" or the verbatim error
-// io:        in → none | out → none
-// processes: testConnection                                              [auto]
 async function runTest(): Promise<void> {
   testing.value = true;
-  testResult.value = "";
+  testResult.value = null;
   const ok = await testConnection();
-  testResult.value = ok ? "OK ✓" : agentError.value || "Test failed.";
+  testResult.value = ok
+    ? { ok: true, text: "Connection verified" }
+    : { ok: false, text: agentError.value || "Connection test failed." };
   testing.value = false;
 }
 
-// ----- filteredModels -----
-// purpose:   the model list narrowed by the search box — free models always come first, and the currently selected model stays visible even when it does not match
-// io:        in → none | out → ModelInfo[]
-// processes: none                                                        [auto]
 const filteredModels = computed(() => {
   const q = modelQuery.value.trim().toLowerCase();
   const match = (m: { id: string; name: string }) =>
     !q || m.id.toLowerCase().includes(q) || m.name.toLowerCase().includes(q);
   const hits = models.value.filter((m) => match(m) && (!freeOnly.value || m.free));
   const selected = models.value.find((m) => m.id === model.value);
-  // keep the selection pickable even if it falls outside the filter
   if (selected && !hits.includes(selected)) hits.unshift(selected);
   return hits;
 });
 
-// ----- freeCount -----
-// purpose:   "N free" headline for the model picker
-// io:        in → none | out → number
-// processes: none                                                        [auto]
 const freeCount = computed(() => models.value.filter((m) => m.free).length);
 </script>
 
 <template>
-  <Dialog :open="open" width="720px" @close="emit('close')">
-    <div class="flex min-h-[440px]">
-      <!-- Tab rail -->
-      <nav class="flex w-[180px] flex-col gap-1 border-r border-[#222] px-3 py-5">
-        <h3 class="mx-2 mb-3 mt-0 text-[#f0f0f0]" :style="{ fontSize: '15px', fontWeight: 700 }">Settings</h3>
+  <Dialog :open="open" width="760px" @close="emit('close')">
+    <div class="settings-shell">
+      <!-- Left Tab Rail -->
+      <nav class="tab-rail select-none" aria-label="Settings sections">
+        <div class="rail-head">
+          <h3 class="rail-title">Settings</h3>
+        </div>
         <button
           v-for="t in TABS"
-          :key="t"
-          class="rounded-md px-2.5 py-2 text-left text-[13px]"
-          :style="{
-            cursor: 'pointer', border: 'none',
-            color: tab === t ? '#f0f0f0' : '#9A9AA2',
-            backgroundColor: tab === t ? '#1B1B1F' : 'transparent',
-          }"
-          @click="tab = t"
-        >{{ t }}</button>
+          :key="t.id"
+          type="button"
+          class="rail-btn"
+          :class="{ 'is-active': tab === t.id }"
+          @click="tab = t.id"
+        >
+          <Icon :name="t.icon" :size="14" />
+          <span>{{ t.id }}</span>
+        </button>
       </nav>
 
-      <!-- Panel -->
-      <div class="flex-1 overflow-y-auto p-6">
-        <!-- General -->
-        <div v-if="tab === 'General'" class="flex flex-col gap-3.5">
-          <h4 class="m-0" :style="{ fontSize: '15px', fontWeight: 700 }">General</h4>
-
-          <div class="rounded-xl border border-[#222] bg-[#0F0F12] p-4">
-            <div class="mb-3 flex items-center gap-3">
-              <span class="h-9 w-9 rounded-lg" style="background: var(--accent)"></span>
-              <div>
-                <div class="text-[#f0f0f0]" :style="{ fontSize: '14px', fontWeight: 700 }">RAKZ <span class="ml-1 text-gray-500" :style="{ fontSize: '11px' }">v0.1.0</span></div>
-                <div class="text-gray-600" :style="{ fontSize: '11px' }">Mnemonic vault · {{ isDesktop ? 'Tauri desktop' : 'Browser session' }}</div>
-              </div>
-            </div>
-            <div class="flex flex-col gap-1" :style="{ fontSize: '12px' }">
-              <div class="flex justify-between"><span class="text-gray-600">MNS format</span><span class="text-[#C8C8C8]" :style="{ fontFamily: 'JetBrains Mono, monospace' }">0.1</span></div>
-              <div class="flex justify-between"><span class="text-gray-600">Parser</span><span class="text-[#C8C8C8]" :style="{ fontFamily: 'JetBrains Mono, monospace' }">@rakz-app/mns-parser 0.1.0</span></div>
-              <div class="flex justify-between"><span class="text-gray-600">App identifier</span><span class="text-[#C8C8C8]" :style="{ fontFamily: 'JetBrains Mono, monospace' }">com.rakz.app</span></div>
-              <div class="flex justify-between"><span class="text-gray-600">Repository</span><span class="text-[#C8C8C8]" :style="{ fontFamily: 'JetBrains Mono, monospace' }">github.com/rakz-app/rakz</span></div>
-            </div>
-          </div>
-
-          <p class="text-gray-600" :style="{ fontSize: '13px' }">{{ subjects.length }} subjects in this vault.</p>
+      <!-- Main Panel -->
+      <div class="tab-body rkz-scroll">
+        <div class="panel-top select-none">
+          <h4 class="panel-title">{{ tab }}</h4>
+          <button type="button" class="close-btn" aria-label="Close settings" @click="emit('close')">
+            <Icon name="x" :size="14" />
+          </button>
         </div>
 
-        <!-- Appearance -->
-        <div v-else-if="tab === 'Appearance'" class="flex flex-col gap-4">
-          <h4 class="m-0" :style="{ fontSize: '15px', fontWeight: 700 }">Appearance</h4>
+        <!-- APPEARANCE -->
+        <div v-if="tab === 'Appearance'" class="stack-gap">
+          <div class="surface-box">
+            <div class="box-label">Workspace Theme</div>
+            <div class="theme-grid">
+              <button
+                type="button"
+                class="theme-card"
+                :class="{ 'is-active': theme === 'dark' }"
+                @click="setTheme('dark')"
+              >
+                <div class="theme-preview is-dark">
+                  <span class="tp-bar" />
+                  <span class="tp-card" />
+                </div>
+                <div class="theme-meta">
+                  <span class="theme-name">Precision Dark</span>
+                  <span class="theme-sub">Low-glare carbon surfaces</span>
+                </div>
+              </button>
 
-          <div class="flex flex-wrap gap-2">
-            <button
-              v-for="s in subjects"
-              :key="s.id"
-              class="rounded-md px-2.5 py-1 text-[12px]"
-              :style="{
-                cursor: 'pointer',
-                border: `1px solid ${targetId() === s.id ? 'var(--accent)' : '#2C2C2C'}`,
-                color: targetId() === s.id ? '#f0f0f0' : '#9A9AA2',
-                backgroundColor: '#0F0F12',
-              }"
-              @click="editId = s.id"
-            >{{ s.name }}</button>
+              <button
+                type="button"
+                class="theme-card"
+                :class="{ 'is-active': theme === 'light' }"
+                @click="setTheme('light')"
+              >
+                <div class="theme-preview is-light">
+                  <span class="tp-bar" />
+                  <span class="tp-card" />
+                </div>
+                <div class="theme-meta">
+                  <span class="theme-name">Warm Paper &amp; Ink</span>
+                  <span class="theme-sub">Archival light reading surface</span>
+                </div>
+              </button>
+            </div>
           </div>
 
-          <p class="text-[#9A9AA2]" :style="{ fontSize: '13px' }">Accent color for <b>{{ targetId() }}</b>.</p>
+          <div class="surface-box">
+            <div class="box-label">Subject Marker Colors</div>
+            <div class="subj-chips">
+              <button
+                v-for="s in subjects"
+                :key="s.id"
+                type="button"
+                class="subj-chip"
+                :class="{ 'is-active': targetId() === s.id }"
+                @click="editId = s.id"
+              >
+                <span class="chip-dot" :style="{ backgroundColor: s.color }" />
+                <span>{{ s.name }}</span>
+              </button>
+            </div>
 
-          <ColorWheel :model-value="colorOf()" @update:model-value="targetId() && setSubjectColor(targetId()!, $event)" />
+            <div class="wheel-section">
+              <ColorWheel
+                :model-value="colorOf()"
+                @update:model-value="targetId() && setSubjectColor(targetId()!, $event)"
+              />
+            </div>
 
-          <div class="flex flex-wrap gap-2.5">
-            <button
-              v-for="c in SWATCHES"
-              :key="c"
-              class="h-7 w-7 rounded-md"
-              :style="{ backgroundColor: c, cursor: 'pointer', border: '2px solid ' + (colorOf() === c ? '#fff' : 'transparent') }"
-              @click="targetId() && setSubjectColor(targetId()!, c)"
-            />
+            <div class="swatch-row">
+              <button
+                v-for="c in SWATCHES"
+                :key="c"
+                type="button"
+                class="swatch-btn"
+                :class="{ 'is-picked': colorOf().toUpperCase() === c.toUpperCase() }"
+                :style="{ backgroundColor: c }"
+                :title="c"
+                @click="targetId() && setSubjectColor(targetId()!, c)"
+              />
+            </div>
           </div>
         </div>
 
-        <!-- AI -->
-        <div v-else-if="tab === 'AI'" class="flex flex-col gap-4">
-          <h4 class="m-0" :style="{ fontSize: '15px', fontWeight: 700 }">AI</h4>
+        <!-- AI CO-PILOT -->
+        <div v-else-if="tab === 'AI'" class="stack-gap">
+          <div class="surface-box">
+            <div class="box-label">OpenRouter API Key (Bring Your Own Key)</div>
 
-          <!-- key status: three deliberately distinct states -->
-          <div class="rounded-xl border border-[#222] bg-[#0F0F12] p-3.5">
-            <div class="mb-1.5 text-gray-600" :style="{ fontSize: '12px' }">OpenRouter API key</div>
+            <p v-if="keyStatus === 'stored' && !sessionFlash" class="key-state is-ok">
+              <span class="dot" /> Key stored securely in the OS keychain
+            </p>
+            <p v-else-if="keyStatus === 'stored' && sessionFlash" class="key-state is-warn">
+              <span class="dot" /> Session-only key active in RAM (cleared when app closes)
+            </p>
+            <p v-else-if="keyStatus === 'unset'" class="key-state">
+              <span class="dot" /> Not configured — paste a key from openrouter.ai/keys
+            </p>
+            <p v-else class="key-state is-err">
+              <span class="dot" /> Keychain unavailable:
+              <code class="font-mono-meta">{{ keychainError }}</code>
+              — enter a session-only key below.
+            </p>
 
-            <!-- stored -->
-            <p v-if="keyStatus === 'stored' && !sessionFlash" class="m-0" :style="{ fontSize: '12px', color: '#4ade80' }">● Key stored in the OS keychain</p>
-            <p v-else-if="keyStatus === 'stored' && sessionFlash" class="m-0" :style="{ fontSize: '12px', color: '#fbbf24' }">● Session-only key stored (keychain unavailable on this system — it dies when the app closes)</p>
-            <!-- unset -->
-            <p v-else-if="keyStatus === 'unset'" class="m-0" :style="{ fontSize: '12px', color: '#9A9AA2' }">○ Not configured — paste a key from openrouter.ai/keys</p>
-            <!-- unavailable: verbatim Rust error -->
-            <p v-else class="m-0" :style="{ fontSize: '12px', color: '#f87171' }">⚠ Keychain unavailable:<br /><code :style="{ fontFamily: 'JetBrains Mono, monospace', fontSize: '11px' }">{{ keychainError }}</code><br />You can store a session-only key below (RAM, this app run only).</p>
-
-            <div class="mt-2.5 flex gap-2">
+            <div class="key-input-row">
               <input
                 v-model="keyValue"
                 type="password"
                 autocomplete="off"
                 spellcheck="false"
-                placeholder="sk-or-…"
-                class="flex-1 rounded-lg border border-[#222] bg-[#0F0F12] px-3 py-2 text-[13px] text-[#e8e8e8] outline-none focus:border-cyan-800/50"
-                :style="{ fontFamily: 'JetBrains Mono, monospace' }"
+                placeholder="sk-or-v1-…"
+                class="rkz-input font-mono-meta key-input"
                 @keydown.enter="saveApiKey"
               />
               <button
-                class="rounded-lg border-0 px-4 py-2 text-[12px] font-bold"
-                :style="{ backgroundColor: keyValue.trim() ? '#0891b2' : '#1E1E22', color: keyValue.trim() ? '#000' : '#555', cursor: keyValue.trim() ? 'pointer' : 'default' }"
+                type="button"
+                class="rkz-btn rkz-btn-primary"
+                :disabled="!keyValue.trim()"
                 @click="saveApiKey"
-              >{{ keySavedFlash ? 'Saved ✓' : 'Save' }}</button>
-              <button
+              >
+                {{ keySavedFlash ? "Saved" : "Save" }}
+              </button>
+              <ConfirmButton
                 v-if="keyStatus === 'stored'"
-                class="rounded-lg px-3 py-2 text-[12px] font-bold"
-                :style="{
-                  cursor: 'pointer',
-                  color: confirmRemove ? '#fecaca' : '#c98a8a',
-                  backgroundColor: confirmRemove ? '#7f1d1d' : 'transparent',
-                  border: confirmRemove ? '1px solid #ef4444' : '1px solid #2C2C2C',
-                }"
-                @click="removeApiKey"
-              >{{ confirmRemove ? 'Confirm remove?' : 'Remove' }}</button>
+                label="Remove"
+                confirm-label="Remove?"
+                :compact="true"
+                @confirm="handleRemoveKey"
+              />
             </div>
-            <p class="m-0 mt-2 text-gray-600" :style="{ fontSize: '11px' }">The key lives only in the OS keychain — never in settings.json, never in the vault, never on screen after saving.</p>
+            <p class="box-hint">
+              Your key never enters <code class="font-mono-meta">settings.json</code> or vault files.
+            </p>
           </div>
 
-          <!-- model: searchable picker, FREE models first -->
-          <div class="rounded-xl border border-[#222] bg-[#0F0F12] p-3.5">
-            <div class="mb-1.5 flex items-center justify-between">
-              <div class="text-gray-600" :style="{ fontSize: '12px' }">Model</div>
-              <span :style="{ fontSize: '11px', color: '#4ade80' }">{{ models.length }} models · {{ freeCount }} free</span>
+          <div class="surface-box">
+            <div class="model-head">
+              <span class="box-label m-0">Model Selection</span>
+              <span class="model-count tabular">{{ models.length }} models · {{ freeCount }} free</span>
             </div>
 
-            <!-- search + free-only toggle -->
-            <div class="mb-2 flex items-center gap-2">
-              <div class="relative flex-1">
-                <span class="absolute left-2.5 top-1/2 -translate-y-1/2 text-[12px] text-gray-500">⌕</span>
+            <div class="model-filter-row">
+              <div class="model-search-wrap">
+                <Icon name="search" :size="12" class="ms-icon" />
                 <input
                   v-model="modelQuery"
-                  placeholder="Search models… (try: free, gemini, llama)"
-                  class="w-full rounded-lg border border-[#222] bg-[#0F0F12] py-1.5 pl-7 pr-3 text-[12px] text-[#e8e8e8] outline-none focus:border-cyan-800/50"
+                  placeholder="Filter models (e.g. free, gemini, llama)…"
+                  class="rkz-input ms-input"
                 />
               </div>
               <button
-                class="flex-shrink-0 rounded-full px-3 py-1.5"
-                :style="{
-                  fontSize: '11px', fontWeight: 700, cursor: 'pointer',
-                  color: freeOnly ? '#4ade80' : '#9A9AA2',
-                  border: freeOnly ? '1px solid rgba(74,222,128,0.5)' : '1px solid #2C2C2C',
-                  backgroundColor: freeOnly ? 'rgba(74,222,128,0.1)' : 'transparent',
-                }"
+                type="button"
+                class="rkz-btn"
+                :class="{ 'rkz-btn-accent-soft': freeOnly }"
                 @click="freeOnly = !freeOnly"
-              >▪ Free only</button>
-            </div>
-
-            <div class="flex items-center gap-2.5">
-              <div class="flex-1 overflow-y-auto rounded-lg border border-[#222]" :style="{ maxHeight: '220px' }">
-                <button
-                  v-for="m in filteredModels"
-                  :key="m.id"
-                  class="flex w-full items-center gap-2.5 border-0 bg-transparent px-3 py-2 text-left"
-                  :style="{
-                    cursor: 'pointer',
-                    backgroundColor: model === m.id ? 'rgba(8,145,178,0.18)' : 'transparent',
-                    borderBottom: '1px solid #1A1A1E',
-                  }"
-                  @click="setModel(m.id)"
-                >
-                  <!-- radio dot -->
-                  <span
-                    class="flex-shrink-0 rounded-full"
-                    :style="{
-                      width: '12px', height: '12px',
-                      border: `2px solid ${model === m.id ? '#22d3ee' : '#444'}`,
-                      backgroundColor: model === m.id ? '#22d3ee' : 'transparent',
-                    }"
-                  />
-                  <span class="min-w-0 flex-1">
-                    <span class="block truncate" :style="{ fontSize: '12px', fontWeight: 700, color: model === m.id ? '#f0f0f0' : '#C8C8C8' }">{{ m.name }}</span>
-                    <span class="block truncate" :style="{ fontSize: '10px', color: '#666', fontFamily: 'JetBrains Mono, monospace' }">{{ m.id }}</span>
-                  </span>
-                  <span
-                    v-if="m.free"
-                    class="flex-shrink-0 rounded-full px-2 py-0.5"
-                    :style="{ fontSize: '9px', fontWeight: 800, letterSpacing: '0.08em', color: '#4ade80', border: '1px solid rgba(74,222,128,0.4)', backgroundColor: 'rgba(74,222,128,0.08)' }"
-                  >FREE</span>
-                </button>
-                <p v-if="!filteredModels.length" class="m-0 px-3 py-3" :style="{ fontSize: '12px', color: '#666' }">No model matches “{{ modelQuery }}”.</p>
-              </div>
+              >
+                Free only
+              </button>
               <button
-                class="rounded-lg border border-[#2C2C2C] bg-transparent px-3 py-2 text-[12px] text-[#C8C8C8]"
-                style="cursor: pointer"
-                title="Reload the live model catalog"
+                type="button"
+                class="rkz-btn icon-btn"
+                title="Reload OpenRouter catalog"
                 @click="refreshModels"
-              >↻</button>
+              >
+                <Icon name="refresh" :size="13" />
+              </button>
             </div>
 
-            <div class="mt-2.5 flex items-center gap-2.5">
+            <div class="model-list rkz-scroll">
               <button
-                class="rounded-lg px-3 py-1.5 text-[12px] font-bold"
-                :style="{ backgroundColor: '#0891b2', color: '#000', border: 'none', cursor: 'pointer' }"
+                v-for="m in filteredModels"
+                :key="m.id"
+                type="button"
+                class="model-row"
+                :class="{ 'is-selected': model === m.id }"
+                @click="setModel(m.id)"
+              >
+                <span class="radio-dot" :class="{ 'is-on': model === m.id }" />
+                <span class="model-info">
+                  <span class="model-name">{{ m.name }}</span>
+                  <span class="model-id font-mono-meta">{{ m.id }}</span>
+                </span>
+                <span v-if="m.free" class="free-badge">FREE</span>
+              </button>
+              <p v-if="!filteredModels.length" class="empty-models">
+                No models match "{{ modelQuery }}".
+              </p>
+            </div>
+
+            <div class="test-row">
+              <button
+                type="button"
+                class="rkz-btn rkz-btn-primary"
                 :disabled="busy || testing"
                 @click="runTest"
-              >{{ testing ? 'Testing…' : 'Test connection' }}</button>
-              <span v-if="testResult" :style="{ fontSize: '12px', color: testResult === 'OK ✓' ? '#4ade80' : '#f87171' }">{{ testResult }}</span>
+              >
+                {{ testing ? "Testing…" : "Test Connection" }}
+              </button>
+              <span v-if="testResult" class="test-msg" :class="testResult.ok ? 'is-ok' : 'is-err'">
+                {{ testResult.text }}
+              </span>
             </div>
           </div>
         </div>
 
-        <!-- Data & Storage -->
-        <div v-else-if="tab === 'Data & Storage'" class="flex flex-col gap-4">
-          <h4 class="m-0" :style="{ fontSize: '15px', fontWeight: 700 }">Data &amp; Storage</h4>
-
-          <div class="rounded-xl border border-[#222] bg-[#0F0F12] p-3.5">
-            <div class="mb-1.5 text-gray-600" :style="{ fontSize: '12px' }">Vault location</div>
-            <div class="flex items-center gap-2.5">
-              <code class="flex-1 break-all text-[#C8C8C8]" :style="{ fontFamily: 'JetBrains Mono, monospace', fontSize: '13px' }">{{ vaultPath }}</code>
-              <button v-if="isDesktop" class="rounded-md border border-[#2C2C2C] bg-transparent px-2.5 py-1.5 text-[12px] text-[#C8C8C8]" style="cursor: pointer" @click="openVaultFolder">Open Folder</button>
+        <!-- DATA & STORAGE -->
+        <div v-else-if="tab === 'Data & Storage'" class="stack-gap">
+          <div class="surface-box">
+            <div class="box-label">Local Vault Directory</div>
+            <div class="path-row">
+              <code class="vault-path font-mono-meta">{{ vaultPath }}</code>
+              <button v-if="isDesktop" type="button" class="rkz-btn" @click="openVaultFolder">
+                <Icon name="folder" :size="13" />
+                <span>Open Folder</span>
+              </button>
             </div>
           </div>
 
-          <div>
-            <div class="mb-1.5 text-gray-600" :style="{ fontSize: '12px' }">Vault statistics</div>
-            <div class="grid grid-cols-4 gap-2.5">
-              <div class="rounded-xl border border-[#222] bg-[#0F0F12] p-3 text-center">
-                <div :style="{ fontSize: '18px', fontWeight: 700, color: '#22d3ee', fontFamily: 'JetBrains Mono, monospace' }">{{ vaultStats.cards }}</div>
-                <div class="text-gray-600" :style="{ fontSize: '10px' }">Total Mnemonics</div>
-              </div>
-              <div class="rounded-xl border border-[#222] bg-[#0F0F12] p-3 text-center">
-                <div :style="{ fontSize: '18px', fontWeight: 700, color: '#22d3ee', fontFamily: 'JetBrains Mono, monospace' }">{{ vaultStats.links }}</div>
-                <div class="text-gray-600" :style="{ fontSize: '10px' }">Links</div>
-              </div>
-              <div class="rounded-xl border border-[#222] bg-[#0F0F12] p-3 text-center">
-                <div :style="{ fontSize: '18px', fontWeight: 700, color: '#22d3ee', fontFamily: 'JetBrains Mono, monospace' }">{{ vaultStats.subjects }}</div>
-                <div class="text-gray-600" :style="{ fontSize: '10px' }">Subjects</div>
-              </div>
-              <div class="rounded-xl border border-[#222] bg-[#0F0F12] p-3 text-center">
-                <div :style="{ fontSize: '18px', fontWeight: 700, color: '#22d3ee', fontFamily: 'JetBrains Mono, monospace' }">{{ sizeLabel }}</div>
-                <div class="text-gray-600" :style="{ fontSize: '10px' }">Disk (est.)</div>
-              </div>
+          <div class="stats-grid tabular">
+            <div class="stat-card">
+              <span class="stat-val font-mono-meta">{{ vaultStats.cards }}</span>
+              <span class="stat-lbl">Mnemonics</span>
+            </div>
+            <div class="stat-card">
+              <span class="stat-val font-mono-meta">{{ vaultStats.links }}</span>
+              <span class="stat-lbl">Links</span>
+            </div>
+            <div class="stat-card">
+              <span class="stat-val font-mono-meta">{{ studyStats.masteredCount }}</span>
+              <span class="stat-lbl">Mastered</span>
+            </div>
+            <div class="stat-card">
+              <span class="stat-val font-mono-meta">{{ sizeLabel }}</span>
+              <span class="stat-lbl">Vault Size</span>
             </div>
           </div>
 
           <KitDropZone />
 
-          <div class="flex gap-2.5">
+          <div class="io-row">
+            <button type="button" class="rkz-btn rkz-btn-primary flex-1" @click="exportVault">
+              <Icon name="download" :size="13" />
+              <span>{{ isDesktop ? "Save & Open Vault (.mns)" : "Export Vault (.mns)" }}</span>
+            </button>
             <button
-              class="flex-1 rounded-lg border-0 py-2.5 text-[13px]"
-              :style="{ backgroundColor: mix(90), color: '#06070A', fontWeight: 500, cursor: 'pointer' }"
-              @click="exportVault"
-            >{{ isDesktop ? 'Save & Show Vault (.mns)' : 'Export Vault (.mns)' }}</button>
-            <button
-              class="flex-1 rounded-lg border border-[#2C2C2C] bg-transparent py-2.5 text-[13px] text-[#C8C8C8]"
-              style="cursor: pointer"
+              type="button"
+              class="rkz-btn flex-1"
               @click="importVault(); clearImportFailure()"
-            >Import Vault (.mns / .rkz)</button>
+            >
+              <Icon name="upload" :size="13" />
+              <span>Import Vault (.mns / .rkz)</span>
+            </button>
           </div>
-          <p v-if="lastImportFailed" class="m-0" :style="{ fontSize: '12px', color: '#f87171' }">
-            That file is not a valid RAKZ vault (.mns or .rkz).
+
+          <p v-if="lastImportFailed" class="err-inline">
+            Selected file is not a valid RAKZ vault (.mns or .rkz).
           </p>
 
-          <div class="flex gap-2.5">
-            <button
-              class="flex-1 rounded-lg border border-[#2C2C2C] bg-transparent py-2 text-[12px] text-[#9A9AA2]"
-              style="cursor: pointer"
-              @click="exportSettings"
-            >Share Settings (.json)</button>
-            <button
-              class="flex-1 rounded-lg border border-[#2C2C2C] bg-transparent py-2 text-[12px] text-[#9A9AA2]"
-              style="cursor: pointer"
-              @click="importSettings"
-            >Import Settings (.json)</button>
+          <div class="io-row">
+            <button type="button" class="rkz-btn flex-1" @click="exportSettings">
+              Export Settings (.json)
+            </button>
+            <button type="button" class="rkz-btn flex-1" @click="importSettings">
+              Import Settings (.json)
+            </button>
           </div>
-          <p class="m-0 text-gray-600" :style="{ fontSize: '11px' }">settings.json carries subject colors today (language/font/theme keys are reserved and round-tripped) — trade it with friends to share skins.</p>
+          <p class="box-hint">
+            <code class="font-mono-meta">settings.json</code> stores theme and subject colors safely outside secrets so vaults stay shareable.
+          </p>
         </div>
 
-        <!-- Shortcuts -->
-        <div v-else class="flex flex-col gap-2.5">
-          <h4 class="m-0" :style="{ fontSize: '15px', fontWeight: 700 }">Keyboard Shortcuts</h4>
-          <div
-            v-for="s in SHORTCUTS"
-            :key="s.label"
-            class="flex items-center justify-between border-b border-[#1A1A1E] py-2"
-          >
-            <span class="text-[#C8C8C8]" :style="{ fontSize: '13px' }">{{ s.label }}</span>
-            <kbd class="rounded-md border border-[#2C2C2C] bg-[#161618] px-2 py-0.5 text-[#9A9AA2]" :style="{ fontFamily: 'JetBrains Mono, monospace', fontSize: '12px' }">{{ s.keys }}</kbd>
+        <!-- SHORTCUTS -->
+        <div v-else-if="tab === 'Shortcuts'" class="shortcut-list">
+          <div v-for="s in SHORTCUTS" :key="s.label" class="shortcut-row">
+            <span class="sc-label">{{ s.label }}</span>
+            <kbd class="rkz-kbd sc-keys">{{ s.keys }}</kbd>
           </div>
+        </div>
+
+        <!-- GENERAL -->
+        <div v-else class="stack-gap">
+          <div class="surface-box">
+            <div class="about-head">
+              <img src="/Image.svg" alt="" width="36" height="36" class="about-logo" />
+              <div>
+                <div class="about-title">
+                  RAKZ <span class="font-mono-meta about-ver">v0.1.0</span>
+                </div>
+                <div class="about-sub">
+                  Local-first mnemonic vault · {{ isDesktop ? "Tauri 2 Desktop (Windows/Linux/macOS)" : "Browser Session" }}
+                </div>
+              </div>
+            </div>
+
+            <div class="meta-table">
+              <div class="meta-line">
+                <span>Format Standard</span>
+                <code class="font-mono-meta">.mns v0.1 (plain-text)</code>
+              </div>
+              <div class="meta-line">
+                <span>Parser</span>
+                <code class="font-mono-meta">@rakz-app/mns-parser 0.1.0</code>
+              </div>
+              <div class="meta-line">
+                <span>App Identifier</span>
+                <code class="font-mono-meta">com.rakz.app</code>
+              </div>
+              <div class="meta-line">
+                <span>Study Schedule</span>
+                <code class="font-mono-meta">.study/reviews.json (local)</code>
+              </div>
+            </div>
+          </div>
+
+          <p class="box-hint">
+            Built on retrieval practice, spaced repetition, cross-subject elaborative linking, and restrained AI scaffolding — 100% offline-capable and user-owned.
+          </p>
         </div>
       </div>
     </div>
   </Dialog>
 </template>
+
+<style scoped>
+.settings-shell {
+  display: flex;
+  min-height: 500px;
+  max-height: 82vh;
+}
+
+.tab-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 184px;
+  padding: 16px 10px;
+  border-right: 1px solid var(--border-subtle);
+  background-color: var(--bg-sidebar);
+  flex-shrink: 0;
+}
+
+.rail-head {
+  padding: 2px 8px 12px;
+}
+
+.rail-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.rail-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 32px;
+  padding: 0 10px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--ease-fast), color var(--ease-fast);
+}
+
+.rail-btn:hover {
+  background-color: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.rail-btn.is-active {
+  background-color: var(--bg-active);
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.tab-body {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 18px 22px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.panel-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.panel-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.close-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.close-btn:hover {
+  background-color: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.stack-gap {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.surface-box {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 16px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-subtle);
+  background-color: var(--bg-surface);
+}
+
+.box-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.box-hint {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.theme-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.theme-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px;
+  border-radius: var(--radius-md);
+  border: 1.5px solid var(--border-default);
+  background-color: var(--bg-input);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color var(--ease-fast);
+}
+
+.theme-card:hover {
+  border-color: var(--border-strong);
+}
+
+.theme-card.is-active {
+  border-color: var(--accent);
+}
+
+.theme-preview {
+  display: flex;
+  gap: 6px;
+  height: 52px;
+  padding: 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(128, 128, 128, 0.2);
+}
+
+.theme-preview.is-dark {
+  background-color: #111214;
+}
+
+.theme-preview.is-dark .tp-bar {
+  width: 24%;
+  border-radius: 3px;
+  background-color: #1d2026;
+}
+
+.theme-preview.is-dark .tp-card {
+  flex: 1;
+  border-radius: 3px;
+  background-color: #1b1d22;
+  border-top: 2px solid #5b82f6;
+}
+
+.theme-preview.is-light {
+  background-color: #f5f2ea;
+}
+
+.theme-preview.is-light .tp-bar {
+  width: 24%;
+  border-radius: 3px;
+  background-color: #e6e0d2;
+}
+
+.theme-preview.is-light .tp-card {
+  flex: 1;
+  border-radius: 3px;
+  background-color: #fcfbf7;
+  border-top: 2px solid #3358d4;
+}
+
+.theme-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.theme-name {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.theme-sub {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.subj-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.subj-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 9px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-default);
+  background-color: var(--bg-input);
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.subj-chip.is-active {
+  border-color: var(--accent);
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.chip-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+}
+
+.wheel-section {
+  padding: 4px 0;
+}
+
+.swatch-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.swatch-btn {
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-xs);
+  border: 2px solid transparent;
+  cursor: pointer;
+}
+
+.swatch-btn.is-picked {
+  border-color: var(--text-primary);
+}
+
+.key-state {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+  flex-wrap: wrap;
+}
+
+.key-state .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background-color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.key-state.is-ok {
+  color: var(--ok);
+}
+.key-state.is-ok .dot {
+  background-color: var(--ok);
+}
+
+.key-state.is-warn {
+  color: var(--warn);
+}
+.key-state.is-warn .dot {
+  background-color: var(--warn);
+}
+
+.key-state.is-err {
+  color: var(--danger);
+}
+.key-state.is-err .dot {
+  background-color: var(--danger);
+}
+
+.key-input-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.key-input {
+  flex: 1;
+  height: 32px;
+  padding: 0 10px;
+}
+
+.model-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.model-count {
+  font-size: 11px;
+  color: var(--ok);
+  font-weight: 600;
+}
+
+.model-filter-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.model-search-wrap {
+  position: relative;
+  flex: 1;
+  display: flex;
+  align-items: center;
+}
+
+.ms-icon {
+  position: absolute;
+  left: 9px;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.ms-input {
+  height: 30px;
+  padding: 0 10px 0 28px;
+}
+
+.icon-btn {
+  width: 30px;
+  padding: 0;
+}
+
+.model-list {
+  max-height: 200px;
+  overflow-y: auto;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+  background-color: var(--bg-input);
+}
+
+.model-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-bottom: 1px solid var(--border-subtle);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.model-row:last-child {
+  border-bottom: none;
+}
+
+.model-row:hover {
+  background-color: var(--bg-hover);
+}
+
+.model-row.is-selected {
+  background-color: var(--accent-subtle);
+}
+
+.radio-dot {
+  width: 11px;
+  height: 11px;
+  border-radius: 999px;
+  border: 1.5px solid var(--border-strong);
+  flex-shrink: 0;
+}
+
+.radio-dot.is-on {
+  border-color: var(--accent);
+  background-color: var(--accent);
+}
+
+.model-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+
+.model-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-id {
+  font-size: 10.5px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.free-badge {
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  padding: 2px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--ok-border);
+  background-color: var(--ok-subtle);
+  color: var(--ok);
+  flex-shrink: 0;
+}
+
+.empty-models {
+  margin: 0;
+  padding: 12px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.test-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.test-msg {
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.test-msg.is-ok {
+  color: var(--ok);
+}
+
+.test-msg.is-err {
+  color: var(--danger);
+}
+
+.path-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.vault-path {
+  flex: 1;
+  font-size: 12px;
+  color: var(--text-secondary);
+  word-break: break-all;
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+
+.stat-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 12px 8px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-subtle);
+  background-color: var(--bg-surface);
+}
+
+.stat-val {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.stat-lbl {
+  font-size: 10.5px;
+  color: var(--text-muted);
+}
+
+.io-row {
+  display: flex;
+  gap: 8px;
+}
+
+.err-inline {
+  margin: 0;
+  font-size: 12px;
+  color: var(--danger);
+}
+
+.shortcut-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.shortcut-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 2px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.shortcut-row:last-child {
+  border-bottom: none;
+}
+
+.sc-label {
+  font-size: 12.5px;
+  color: var(--text-primary);
+}
+
+.sc-keys {
+  height: 22px;
+  padding: 0 7px;
+  font-size: 11px;
+}
+
+.about-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.about-logo {
+  border-radius: var(--radius-md);
+}
+
+.about-title {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.about-ver {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted);
+  margin-left: 4px;
+}
+
+.about-sub {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.meta-table {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.meta-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.meta-line code {
+  color: var(--text-primary);
+  font-size: 11.5px;
+}
+</style>

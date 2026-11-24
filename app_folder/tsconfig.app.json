@@ -10,7 +10,8 @@
     "verbatimModuleSyntax": true,
     "paths": {
       "@/*": ["./src/*"],
-      "@engine/*": ["../engine_folder/src/*"]
+      "@engine/*": ["../engine_folder/src/*"],
+      "@rakz-app/mns-parser": ["./node_modules/@rakz-app/mns-parser"]
     }
   },
   "include": ["src/**/*", "src/**/*.vue", "tests/**/*.ts"],

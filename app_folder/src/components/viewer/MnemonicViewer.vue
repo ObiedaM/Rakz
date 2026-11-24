@@ -1,79 +1,62 @@
 <script setup lang="ts">
-// ========== 1. IMPORTS ==========
-import { computed, ref, watch } from "vue";
+// Central viewport switching cleanly between Stack, Study (Active Recall), Grid, and Graph.
+
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useLibrary } from "@/composables/library";
+import type { Memonic } from "@/composables/library";
 import MnemonicCard from "@/components/viewer/MnemonicCard.vue";
+import StudyMode from "@/components/viewer/StudyMode.vue";
 import GraphView from "@/components/graph/GraphView.vue";
 import Dialog from "@/components/ui/Dialog.vue";
 import StarRating from "@/components/ui/StarRating.vue";
-import type { Memonic } from "@engine/types";
+import Icon from "@/components/ui/Icon.vue";
 
-// ========== 2. TYPES ==========
-// (props declared via runtime declaration below)
+const props = withDefaults(
+  defineProps<{
+    view?: "stack" | "study" | "grid" | "graph";
+    sort?: string;
+    filterTag?: string;
+  }>(),
+  { view: "stack", sort: "recent", filterTag: "" },
+);
 
-// ========== 3. CONSTANTS ==========
-// (none)
+const emit = defineEmits<{ "open-stack": [] }>();
 
-// ========== 4. STATE ==========
-const props = defineProps({
-  view: { type: String, default: "stack" },
-  sort: { type: String, default: "recent" },
-  filterTag: { type: String, default: "" },
-});
-
-const { deck, subjects, memonics, activeSid, select } = useLibrary();
+const { deck, subjects, memonics, activeSid, select, create, linkCount, isCardDue } = useLibrary();
 
 const modalId = ref<number | null>(null);
-const modalMemonic = computed<Memonic | undefined>(() => memonics.value.find((m) => m.sid === modalId.value));
+const modalMemonic = computed<Memonic | undefined>(() =>
+  memonics.value.find((m) => m.sid === modalId.value),
+);
 
-// ========== 5. LOGIC ==========
-
-// ----- processList -----
-// purpose:   apply the TopBar filter and sort to a card list
-// io:        in → list (Memonic[]) | out → Memonic[] (filtered + sorted copy)
-// processes: none                                                        [auto]
 function processList(list: Memonic[]): Memonic[] {
-  // 1. hashtag filter (case-insensitive, '#' optional)
   let arr = [...list];
   if (props.filterTag) {
-    const f = props.filterTag.toLowerCase().replace("#", "");
+    const f = props.filterTag.toLowerCase().replace(/^#/, "");
     arr = arr.filter((m) => m.tags && m.tags.some((t) => t.toLowerCase().includes(f)));
   }
-  // 2. sort by the chosen key
   if (props.sort === "recent") arr.sort((a, b) => b.sid - a.sid);
   else if (props.sort === "importance") arr.sort((a, b) => (b.importance || 0) - (a.importance || 0));
-  else if (props.sort === "linked") arr.sort((a, b) => (b.links?.length || 0) - (a.links?.length || 0));
+  else if (props.sort === "linked") arr.sort((a, b) => linkCount(b) - linkCount(a));
   return arr;
 }
 
-// ----- arrangedStack -----
-// purpose:   the stack view cards with their position relative to the active card
-// io:        in → none | out → { memonic, relative }[]
-// processes: processList                                                  [auto]
-const arrangedStack = computed(() => {
-  const arr = processList(deck.value);
-  const activeIdx = arr.findIndex((m) => m.sid === activeSid.value);
-  return arr.map((m, i) => {
-    const relative = i - (activeIdx === -1 ? 0 : activeIdx);
-    return { memonic: m, relative };
-  });
+const visibleDeck = computed(() => processList(deck.value));
+
+const activeCardInStack = computed<Memonic | null>(() => {
+  const arr = visibleDeck.value;
+  if (!arr.length) return null;
+  return arr.find((m) => m.sid === activeSid.value) ?? arr[0] ?? null;
 });
 
-// Keep selection consistent with what is visible: if filter/sort hides the
-// active card, promote the first visible one — TopBar, card, and RightPanel
-// then all describe the SAME card.
-watch(arrangedStack, () => {
+watch(visibleDeck, () => {
   if (props.view !== "stack") return;
-  const arr = arrangedStack.value;
-  if (arr.length && !arr.some(({ memonic }) => memonic.sid === activeSid.value)) {
-    select(arr[0]!.memonic.sid);
+  const arr = visibleDeck.value;
+  if (arr.length && !arr.some((m) => m.sid === activeSid.value)) {
+    select(arr[0]!.sid);
   }
 });
 
-// ----- groupedGrid -----
-// purpose:   the grid view — processed cards grouped by subject (empty groups dropped)
-// io:        in → none | out → { subject, cards }[]
-// processes: processList                                                  [auto]
 const groupedGrid = computed(() => {
   const allProcessed = processList(memonics.value);
   return subjects.value
@@ -81,113 +64,372 @@ const groupedGrid = computed(() => {
     .filter((g) => g.cards.length > 0);
 });
 
-// If the card shown in the modal is deleted, close the modal with it.
 watch(modalMemonic, (m) => {
   if (modalId.value != null && !m) modalId.value = null;
 });
 
-// The card's < > arrows navigate by changing the selection; while the modal
-// is open it follows the selection so the arrows page through cards there too.
 watch(activeSid, (sid) => {
   if (modalId.value != null && sid != null && sid !== modalId.value) modalId.value = sid;
 });
+
+function onKey(e: KeyboardEvent): void {
+  if (props.view !== "stack" || !e.altKey) return;
+  if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+  const list = visibleDeck.value;
+  if (list.length < 2 || activeSid.value == null) return;
+  e.preventDefault();
+  const i = list.findIndex((m) => m.sid === activeSid.value);
+  const dir = e.key === "ArrowRight" ? 1 : -1;
+  select(list[(i + dir + list.length) % list.length]!.sid);
+}
+
+onMounted(() => window.addEventListener("keydown", onKey));
+onBeforeUnmount(() => window.removeEventListener("keydown", onKey));
 </script>
 
 <template>
-  <div :style="{ flex: 1, position: 'relative', backgroundColor: '#09090B', overflow: 'hidden', display: 'flex', flexDirection: 'column', fontFamily: 'system-ui, -apple-system, sans-serif' }">
+  <div class="viewer-root">
+    <!-- STUDY VIEW (Active Recall + Spaced Repetition) -->
+    <StudyMode v-if="view === 'study'" @open-stack="emit('open-stack')" />
 
     <!-- GRID VIEW -->
-    <div v-if="view === 'grid'" :style="{ flex: 1, overflowY: 'auto', padding: '40px' }" class="custom-scrollbar">
-      <div :style="{ maxWidth: '1200px', margin: '0 auto' }">
-        <div v-for="group in groupedGrid" :key="group.subject.id" :style="{ marginBottom: '40px' }">
+    <div v-else-if="view === 'grid'" class="grid-scroll rkz-scroll">
+      <div v-if="groupedGrid.length" class="grid-inner">
+        <section v-for="group in groupedGrid" :key="group.subject.id" class="grid-group">
+          <div class="group-head select-none">
+            <span class="group-dot" :style="{ backgroundColor: group.subject.color }" />
+            <h2 class="group-title">{{ group.subject.name }}</h2>
+            <span class="group-count tabular">{{ group.cards.length }}</span>
+          </div>
 
-           <!-- Group Header -->
-           <div :style="{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px', paddingLeft: '4px' }">
-              <div :style="{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: group.subject.color }"></div>
-              <h2 :style="{ margin: 0, fontSize: '15px', fontWeight: 700, color: '#e8e8e8' }">{{ group.subject.name }}</h2>
-              <span :style="{ fontSize: '11px', color: '#555', fontWeight: 600, marginLeft: '4px' }">{{ group.cards.length }}</span>
-           </div>
+          <div class="card-grid">
+            <button
+              v-for="card in group.cards"
+              :key="card.sid"
+              type="button"
+              class="grid-card"
+              :class="{ 'is-active': card.sid === activeSid }"
+              @click="
+                modalId = card.sid;
+                select(card.sid);
+              "
+            >
+              <div class="grid-accent" :style="{ backgroundColor: group.subject.color }" />
 
-           <!-- Cards Grid -->
-           <div :style="{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '20px' }">
-              <div
-                v-for="card in group.cards" :key="card.sid"
-                @click="modalId = card.sid; select(card.sid)"
-                class="grid-card-hover"
-                :style="{ cursor: 'pointer', height: '190px', transition: 'transform 0.2s ease-out' }"
-              >
-                 <!-- Figma-Accurate Grid Card -->
-                 <div :style="{ width: '100%', height: '100%', backgroundColor: '#121214', borderTop: `3px solid ${group.subject.color}`, borderRight: '1px solid #1E1E22', borderBottom: '1px solid #1E1E22', borderLeft: '1px solid #1E1E22', borderRadius: '8px', padding: '20px', display: 'flex', flexDirection: 'column', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }">
-
-                    <div :style="{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' }">
-                       <span :style="{ fontSize: '9px', fontWeight: 800, color: group.subject.color, textTransform: 'uppercase', letterSpacing: '0.05em', backgroundColor: `${group.subject.color}15`, padding: '3px 6px', borderRadius: '4px' }">{{ group.subject.name }}</span>
-                       <span :style="{ fontSize: '9px', color: '#555', textTransform: 'uppercase', fontWeight: 700 }">{{ card.type }}</span>
-                    </div>
-
-                    <h3 :style="{ margin: '0 0 8px 0', fontSize: '15px', fontWeight: 700, color: '#fff', lineHeight: 1.3, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }">{{ card.title }}</h3>
-
-                    <p :style="{ margin: 0, fontSize: '12px', color: '#9A9AA2', lineHeight: 1.5, display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }">{{ card.context }}</p>
-
-                    <div :style="{ marginTop: 'auto', paddingTop: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid #1E1E22' }">
-                       <StarRating :model-value="card.importance" :readonly="true" />
-                       <span :style="{ fontSize: '10px', color: '#555', fontWeight: 500 }">Active</span>
-                    </div>
-
-                 </div>
+              <div class="grid-card-top">
+                <span class="grid-type">{{ card.type }}</span>
+                <div class="grid-badges tabular">
+                  <span v-if="linkCount(card) > 0" class="grid-meta-pill">
+                    <Icon name="link" :size="11" />
+                    {{ linkCount(card) }}
+                  </span>
+                  <span v-if="isCardDue(card)" class="grid-due-pill">Due</span>
+                </div>
               </div>
-           </div>
-        </div>
+
+              <h3 dir="auto" class="grid-card-title">{{ card.title || "Untitled mnemonic" }}</h3>
+
+              <p dir="auto" class="grid-card-ctx">
+                {{ card.context || "No explanation yet." }}
+              </p>
+
+              <div v-if="card.tags.length" class="grid-tags">
+                <span v-for="t in card.tags.slice(0, 3)" :key="t" class="grid-tag font-mono-meta">#{{ t }}</span>
+                <span v-if="card.tags.length > 3" class="grid-tag-more tabular">+{{ card.tags.length - 3 }}</span>
+              </div>
+
+              <div class="grid-card-foot">
+                <StarRating :model-value="card.importance" :size="13" :readonly="true" />
+                <span class="grid-status">{{ card.status || "active" }}</span>
+              </div>
+            </button>
+          </div>
+        </section>
       </div>
 
-      <!-- Grid Modal -->
-      <Dialog :open="!!modalId" width="700px" @close="modalId = null">
-         <div :style="{ height: '600px', backgroundColor: '#161618', borderRadius: '12px', overflow: 'hidden', border: '1px solid #222' }">
-            <MnemonicCard v-if="modalMemonic" :memonic="modalMemonic" :editable="true" />
-         </div>
+      <!-- Grid Empty State -->
+      <div v-else class="empty-stage select-none">
+        <Icon name="grid" :size="24" />
+        <p class="empty-title">No mnemonics match this filter.</p>
+        <button type="button" class="rkz-btn rkz-btn-primary" @click="create()">
+          <Icon name="plus" :size="13" />
+          <span>New Mnemonic</span>
+        </button>
+      </div>
+
+      <!-- Grid Card Inspector Modal -->
+      <Dialog :open="!!modalId" width="740px" @close="modalId = null">
+        <div class="grid-modal-box">
+          <MnemonicCard v-if="modalMemonic" :memonic="modalMemonic" :editable="true" />
+        </div>
       </Dialog>
     </div>
 
     <!-- GRAPH VIEW -->
-    <GraphView v-else-if="view === 'graph'" />
+    <GraphView v-else-if="view === 'graph'" :filter-tag="filterTag" @open-stack="emit('open-stack')" />
 
-    <!-- STACK VIEW -->
-    <div v-else :style="{ flex: 1, position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px' }">
-      <div :style="{ position: 'relative', width: '100%', maxWidth: '750px', height: '100%', maxHeight: '650px', display: 'flex', alignItems: 'center', justifyContent: 'center' }">
-        <div
-          v-for="({ memonic, relative }) in arrangedStack"
-          :key="memonic.sid"
-          @click="select(memonic.sid)"
-          :style="{
-            position: 'absolute', width: '100%', height: '100%', transition: 'all 0.5s ease-out', transformOrigin: 'left center',
-            zIndex: 100 - Math.abs(relative),
-            cursor: relative === 0 ? 'default' : 'pointer',
-            transform: relative === 0 ? 'none' : `translate(${relative * -40}px, 0) scale(${1 - Math.abs(relative) * 0.05})`,
-            opacity: relative > 0 ? 0 : (Math.abs(relative) > 5 ? 0 : 1 - (Math.abs(relative) * 0.1)),
-            pointerEvents: relative > 0 ? 'none' : 'auto'
-          }"
-        >
-          <MnemonicCard
-            :memonic="memonic"
-            :editable="relative === 0"
-            :style="{ width: '100%', height: '100%', boxShadow: relative === 0 ? '0 20px 50px rgba(0,0,0,0.5)' : '30px 0 60px -15px rgba(0,0,0,0.9)', filter: relative === 0 ? 'none' : 'brightness(0.4)', border: relative === 0 ? '1px solid rgba(8,145,178,0.5)' : 'none', transition: 'all 0.5s ease-out' }"
-          />
-        </div>
+    <!-- STACK STUDIO VIEW -->
+    <div v-else class="stack-stage">
+      <div v-if="activeCardInStack" class="stack-frame">
+        <div v-if="visibleDeck.length > 1" class="stack-paper-back" aria-hidden="true" />
+        <MnemonicCard :memonic="activeCardInStack" :editable="true" />
       </div>
 
-      <!-- Empty State -->
-      <div v-if="arrangedStack.length === 0" :style="{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#555', gap: '16px' }">
-        <div :style="{ fontSize: '48px', opacity: 0.2 }">🗂️</div>
-        <p :style="{ fontSize: '14px', letterSpacing: '0.1em', textTransform: 'uppercase', fontWeight: 500 }">No cards match this filter.</p>
+      <div v-else class="empty-stage select-none">
+        <Icon name="stack" :size="24" />
+        <p class="empty-title">
+          {{ filterTag ? `No cards tagged "${filterTag}" in this subject.` : "No mnemonic cards yet." }}
+        </p>
+        <button type="button" class="rkz-btn rkz-btn-primary" @click="create()">
+          <Icon name="plus" :size="13" />
+          <span>Create Mnemonic</span>
+        </button>
       </div>
     </div>
-
   </div>
 </template>
 
 <style scoped>
-.custom-scrollbar::-webkit-scrollbar { width: 8px; }
-.custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
-.custom-scrollbar::-webkit-scrollbar-thumb { background-color: #2C2C30; border-radius: 10px; }
-.custom-scrollbar:hover::-webkit-scrollbar-thumb { background-color: #444; }
-.grid-card-hover:hover { transform: translateY(-4px) !important; }
+.viewer-root {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  background-color: var(--bg-root);
+}
+
+/* Stack Studio */
+.stack-stage {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  align-items: center;
+  justify-content: center;
+  padding: 20px 24px;
+}
+
+.stack-frame {
+  position: relative;
+  width: 100%;
+  max-width: 780px;
+  height: 100%;
+  max-height: 760px;
+  z-index: 1;
+}
+
+.stack-paper-back {
+  position: absolute;
+  inset: 8px -6px -6px 8px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-subtle);
+  background-color: var(--bg-sidebar);
+  z-index: -1;
+  pointer-events: none;
+}
+
+/* Grid View */
+.grid-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 24px 28px 36px;
+}
+
+.grid-inner {
+  max-width: 1200px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+
+.grid-group {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.group-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.group-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+}
+
+.group-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.group-count {
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 14px;
+}
+
+.grid-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 184px;
+  padding: 16px 16px 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-subtle);
+  background-color: var(--bg-surface);
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  transition: border-color var(--ease-fast), transform var(--ease-fast), box-shadow var(--ease-fast);
+}
+
+.grid-card:hover {
+  border-color: var(--border-strong);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+}
+
+.grid-card.is-active {
+  border-color: var(--accent-border);
+}
+
+.grid-accent {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2.5px;
+}
+
+.grid-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.grid-type {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.grid-badges {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.grid-meta-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10.5px;
+  color: var(--text-secondary);
+}
+
+.grid-due-pill {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background-color: var(--bridge-subtle);
+  color: var(--bridge);
+}
+
+.grid-card-title {
+  margin: 0;
+  font-size: 14.5px;
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--text-primary);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.grid-card-ctx {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.grid-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: auto;
+  padding-top: 4px;
+}
+
+.grid-tag {
+  font-size: 10.5px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background-color: var(--bg-input);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+}
+
+.grid-tag-more {
+  font-size: 10.5px;
+  color: var(--text-muted);
+}
+
+.grid-card-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.grid-status {
+  font-size: 10.5px;
+  text-transform: capitalize;
+  color: var(--text-muted);
+}
+
+.grid-modal-box {
+  height: 620px;
+}
+
+.empty-stage {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  flex: 1;
+  min-height: 260px;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.empty-title {
+  margin: 0;
+  font-size: 13.5px;
+  color: var(--text-secondary);
+}
 </style>

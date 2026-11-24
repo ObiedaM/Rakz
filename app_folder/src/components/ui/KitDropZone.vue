@@ -1,44 +1,25 @@
 <script setup lang="ts">
-// "Drop .rkz Premium Kit Here" — drag-drop a vault file. Parse/merge routes
-// through useLibrary.importVaultText → engine importDocument.
-
-// ========== 1. IMPORTS ==========
+// Drag-drop zone for .mns / .rkz vaults & curated subject kits.
 import { ref } from "vue";
-import { mix } from "@/lib/utils";
 import { useLibrary } from "@/composables/library";
+import Icon from "@/components/ui/Icon.vue";
 
-// ========== 2. TYPES ==========
-// (none)
-
-// ========== 3. CONSTANTS ==========
-// (none)
-
-// ========== 4. STATE ==========
 const { importVaultText } = useLibrary();
 const over = ref(false);
-const note = ref("");
+const status = ref<{ ok: boolean; text: string } | null>(null);
 
-// ========== 5. LOGIC ==========
-
-// ----- handleFile -----
-// purpose:   read a dropped/picked vault file and import its text
-// io:        in → file (File | null | undefined) | out → none (result lands in note)
-// processes: importVaultText                                                 [auto]
 function handleFile(file: File | null | undefined): void {
   if (!file) return;
   const reader = new FileReader();
   reader.onload = () => {
-    note.value = importVaultText(String(reader.result))
-      ? `Loaded “${file.name}” ✓`
-      : "That file is not a valid RAKZ kit (.mns / .rkz).";
+    const ok = importVaultText(String(reader.result));
+    status.value = ok
+      ? { ok: true, text: `Imported "${file.name}" into vault.` }
+      : { ok: false, text: `"${file.name}" is not a valid RAKZ file (.mns or .rkz).` };
   };
   reader.readAsText(file);
 }
 
-// ----- onDrop -----
-// purpose:   accept a drag-drop and hand the first file to the importer
-// io:        in → e (DragEvent) | out → none
-// processes: handleFile                                                     [auto]
 function onDrop(e: DragEvent): void {
   e.preventDefault();
   over.value = false;
@@ -49,19 +30,78 @@ function onDrop(e: DragEvent): void {
 <template>
   <div>
     <div
-      class="flex flex-col items-center justify-center gap-2 rounded-xl p-6 text-center transition-all"
-      :style="{
-        border: `2px dashed ${over ? 'var(--accent)' : '#33333A'}`,
-        backgroundColor: over ? mix(8) : '#0F0F12',
-      }"
+      class="drop-zone select-none"
+      :class="{ 'is-over': over }"
       @dragover.prevent="over = true"
       @dragleave="over = false"
       @drop="onDrop"
     >
-      <div class="text-2xl" :style="{ color: over ? 'var(--accent)' : '#555' }">⬇</div>
-      <div class="text-[#C8C8C8]" :style="{ fontSize: '14px' }">Drop a <b>.mns</b> / <b>.rkz</b> vault here</div>
-      <div class="text-gray-600" :style="{ fontSize: '12px' }">or use Import Vault below</div>
+      <Icon name="upload" :size="18" class="drop-icon" />
+      <div class="drop-title">
+        Drop a <code class="font-mono-meta">.mns</code> or <code class="font-mono-meta">.rkz</code> study kit here
+      </div>
+      <div class="drop-sub">or use Import Vault below</div>
     </div>
-    <p v-if="note" class="mt-2" :style="{ fontSize: '12px', color: '#8AE28A' }">{{ note }}</p>
+
+    <p v-if="status" class="drop-status" :class="status.ok ? 'is-ok' : 'is-err'">
+      <Icon :name="status.ok ? 'check' : 'alert'" :size="13" />
+      <span>{{ status.text }}</span>
+    </p>
   </div>
 </template>
+
+<style scoped>
+.drop-zone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 20px 16px;
+  border-radius: var(--radius-md);
+  border: 1.5px dashed var(--border-strong);
+  background-color: var(--bg-input);
+  text-align: center;
+  transition: border-color var(--ease-fast), background-color var(--ease-fast);
+}
+
+.drop-zone.is-over {
+  border-color: var(--accent);
+  background-color: var(--accent-subtle);
+}
+
+.drop-icon {
+  color: var(--text-muted);
+}
+
+.drop-zone.is-over .drop-icon {
+  color: var(--accent);
+}
+
+.drop-title {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.drop-sub {
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+.drop-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 0 0;
+  font-size: 12px;
+}
+
+.drop-status.is-ok {
+  color: var(--ok);
+}
+
+.drop-status.is-err {
+  color: var(--danger);
+}
+</style>

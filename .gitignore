@@ -2,5 +2,14 @@ node_modules/
 dist/
 target/
 *.local
+.env
+.env.*
+*.key
+*.pem
+*.p12
+*.pfx
+*.log
+.study/
+settings.json
 .DS_Store
 *.tsbuildinfo

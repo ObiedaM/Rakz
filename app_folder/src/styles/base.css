@@ -1,8 +1,7 @@
-/* Global styles. Import once in main.ts. */
-@import 'tailwindcss';
-@import './tokens.css';
+/* Global styles. Imported once in main.ts. */
+@import "tailwindcss";
+@import "./tokens.css";
 
-/* App shell: fill the OS window; inner panels do their own scrolling. */
 html,
 body,
 #app {
@@ -10,19 +9,187 @@ body,
   padding: 0;
   width: 100%;
   height: 100%;
-  overflow: hidden;               /* root overflow lock */
+  overflow: hidden;
   background-color: var(--bg-root);
-  color: var(--text-hi);
-  font-family: Inter, system-ui, sans-serif;
-  font-weight: 500;               /* body defaults to Medium */
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
-/* High-contrast headings, Bold. */
-h1, h2, h3, h4 {
-  font-weight: 700;
-  color: var(--text-hi);
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
 }
 
-/* Localized hidden scrollbars — scroll still works inside panels. */
-.rkz-app *::-webkit-scrollbar { width: 0; height: 0; }
-.rkz-app * { scrollbar-width: none; -ms-overflow-style: none; }
+h1,
+h2,
+h3,
+h4 {
+  font-weight: 600;
+  color: var(--text-primary);
+  letter-spacing: -0.015em;
+}
+
+/* Accessible desktop focus ring across buttons, inputs, and controls */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: none;
+  border-color: var(--accent-border);
+  box-shadow: 0 0 0 2px var(--accent-subtle);
+}
+
+/* Tabular numerals for counters, review intervals, scores, and statistics */
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+.font-mono-meta {
+  font-family: var(--font-mono);
+}
+
+/* Native desktop scrollbars: subtle, quiet, and usable with a Windows mouse */
+.rkz-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-default) transparent;
+}
+
+.rkz-scroll::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+
+.rkz-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.rkz-scroll::-webkit-scrollbar-thumb {
+  background-color: var(--border-subtle);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+.rkz-scroll:hover::-webkit-scrollbar-thumb {
+  background-color: var(--border-strong);
+}
+
+/* Keyboard shortcut keycap badge */
+.rkz-kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--border-default);
+  background-color: var(--bg-input);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+/* Micro uppercase section heading */
+.rkz-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+/* Shared desktop button primitives */
+.rkz-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-default);
+  background-color: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1;
+  cursor: pointer;
+  user-select: none;
+  transition: background-color var(--ease-fast), border-color var(--ease-fast), color var(--ease-fast);
+}
+
+.rkz-btn:hover:not(:disabled) {
+  background-color: var(--bg-hover);
+  border-color: var(--border-strong);
+  color: var(--text-primary);
+}
+
+.rkz-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.rkz-btn-primary {
+  border-color: var(--accent);
+  background-color: var(--accent);
+  color: var(--accent-fg);
+  font-weight: 600;
+}
+
+.rkz-btn-primary:hover:not(:disabled) {
+  background-color: var(--accent-hover);
+  border-color: var(--accent-hover);
+  color: var(--accent-fg);
+}
+
+.rkz-btn-ghost {
+  border-color: transparent;
+  background-color: transparent;
+}
+
+.rkz-btn-ghost:hover:not(:disabled) {
+  background-color: var(--bg-hover);
+  border-color: transparent;
+}
+
+.rkz-btn-accent-soft {
+  border-color: var(--accent-border);
+  background-color: var(--accent-subtle);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.rkz-btn-accent-soft:hover:not(:disabled) {
+  background-color: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-fg);
+}
+
+.rkz-input {
+  width: 100%;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-default);
+  background-color: var(--bg-input);
+  color: var(--text-primary);
+  font-size: 12.5px;
+  line-height: 1.4;
+  transition: border-color var(--ease-fast), box-shadow var(--ease-fast);
+}
+
+.rkz-input::placeholder {
+  color: var(--text-muted);
+}

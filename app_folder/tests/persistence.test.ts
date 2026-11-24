@@ -22,11 +22,28 @@ describe("sanitizeHir / fileNameFor", () => {
     expect(persistence.fileNameFor(card(1, "Physics", "science/physics", "t"))).toBe("science/physics.mns");
   });
 
-  it("rejects traversal and unsafe segments", async () => {
+  it("rejects traversal, Windows reserved names, backslashes, and trailing dots", async () => {
     const { persistence } = await fresh();
     expect(persistence.sanitizeHir("../escape")).toBe("escape");
     expect(persistence.sanitizeHir("a/../../b")).toBe("a/b");
     expect(persistence.sanitizeHir("we:ird*name?")).toBe("we-ird-name-");
+    expect(persistence.sanitizeHir("science\\physics")).toBe("science/physics");
+    expect(persistence.sanitizeHir("Biology...")).toBe("Biology");
+    expect(persistence.sanitizeHir("CON")).toBe("_CON");
+    expect(persistence.sanitizeHir("folder/nul")).toBe("folder/_nul");
+  });
+
+  it("prevents Windows NTFS case-only rename data loss in groupCardsByFile and findStaleFiles", async () => {
+    const { persistence } = await fresh();
+    const cards = [card(1, "Biology", "", "Cell"), card(2, "biology", "", "DNA")];
+    const groups = persistence.groupCardsByFile(cards);
+    expect(groups.size).toBe(1);
+    expect(groups.get("Biology.mns")?.map((c) => c.sid)).toEqual([1, 2]);
+
+    // Renaming Biology.mns -> biology.mns must NEVER schedule Biology.mns for deletion on NTFS
+    const stale = persistence.findStaleFiles(["Biology.mns", "OldSubject.mns"], ["biology.mns"]);
+    expect(stale.caseRenamed).toEqual(["Biology.mns"]);
+    expect(stale.toDelete).toEqual(["OldSubject.mns"]);
   });
 
   it("falls back to subject id, then 'vault', when no hierarchy", async () => {

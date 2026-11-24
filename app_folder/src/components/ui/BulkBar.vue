@@ -1,89 +1,146 @@
 <script setup lang="ts">
-// Floating bulk-action bar — appears whenever the Ctrl+click selection is
-// non-empty. Move (re-hir), Copy as .mns text, Export to .exports/, Delete.
-
-// ========== 1. IMPORTS ==========
+// Floating bulk-action dock when multiple cards are Ctrl/Cmd-selected.
 import { ref } from "vue";
 import { useLibrary } from "@/composables/library";
 import { useAgent } from "@/composables/useAgent";
+import Icon from "@/components/ui/Icon.vue";
+import ConfirmButton from "@/components/ui/ConfirmButton.vue";
 
-// ========== 2. TYPES ==========
-// (none)
-
-// ========== 3. CONSTANTS ==========
-// (none)
-
-// ========== 4. STATE ==========
 const { selectedSids, clearSelected, bulkMove, bulkDelete, copySelection, exportSelection } = useLibrary();
-
-const moveTo = ref("");
-const confirmDel = ref(false);
-const copied = ref(false);
-
 const { openAsk } = useAgent();
 
-// ========== 5. LOGIC ==========
+const moveTo = ref("");
+const copied = ref(false);
 
-// ----- doMove -----
-// purpose:   move the selection to the typed folder (empty = regroup by subject)
-// io:        in → none | out → none
-// processes: bulkMove                                                       [auto]
 function doMove(): void {
   bulkMove(moveTo.value);
   moveTo.value = "";
 }
 
-// ----- doCopy -----
-// purpose:   copy the selection as .mns text and flash a confirmation
-// io:        in → none | out → none
-// processes: copySelection                                                  [auto]
 async function doCopy(): Promise<void> {
   copied.value = await copySelection();
   setTimeout(() => (copied.value = false), 1500);
-}
-
-// ----- doDelete -----
-// purpose:   two-step delete — first click arms (3s window), second click deletes
-// io:        in → none | out → none
-// processes: bulkDelete                                                     [auto]
-function doDelete(): void {
-  if (!confirmDel.value) {
-    confirmDel.value = true;
-    setTimeout(() => (confirmDel.value = false), 3000);
-    return;
-  }
-  confirmDel.value = false;
-  bulkDelete();
 }
 </script>
 
 <template>
   <Teleport to="body">
-    <div
-      v-if="selectedSids.length"
-      :style="{
-        position: 'fixed', left: '50%', bottom: '18px', transform: 'translateX(-50%)', zIndex: 1500,
-        display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', maxWidth: '92vw',
-        backgroundColor: 'rgba(15,15,18,0.96)', border: '1px solid rgba(8,145,178,0.4)', borderRadius: '12px',
-        padding: '10px 14px', boxShadow: '0 16px 40px rgba(0,0,0,0.6)', fontFamily: 'system-ui, sans-serif',
-      }"
-    >
-      <span :style="{ fontSize: '12px', fontWeight: 700, color: '#22d3ee' }">☑ {{ selectedSids.length }} selected</span>
-      <div :style="{ width: '1px', height: '16px', backgroundColor: '#2C2C2C' }"></div>
+    <div v-if="selectedSids.length" class="bulk-bar select-none">
+      <span class="bulk-count tabular">
+        <Icon name="check" :size="13" />
+        {{ selectedSids.length }} selected
+      </span>
 
-      <input
-        v-model="moveTo"
-        @keydown.enter="doMove"
-        placeholder="📁 move to folder… (empty = by subject)"
-        :style="{ width: '220px', backgroundColor: '#0F0F12', border: '1px solid #222', borderRadius: '6px', padding: '5px 10px', color: '#C8C8C8', fontSize: '12px', fontFamily: 'JetBrains Mono, monospace', outline: 'none' }"
+      <div class="bulk-sep" />
+
+      <div class="bulk-move">
+        <input
+          v-model="moveTo"
+          placeholder="folder/path (blank = subject)"
+          class="rkz-input font-mono-meta move-input"
+          @keydown.enter="doMove"
+        />
+        <button type="button" class="rkz-btn" @click="doMove">Move</button>
+      </div>
+
+      <button type="button" class="rkz-btn" @click="doCopy">
+        <Icon :name="copied ? 'check' : 'copy'" :size="13" />
+        <span>{{ copied ? "Copied" : "Copy .mns" }}</span>
+      </button>
+
+      <button type="button" class="rkz-btn rkz-btn-accent-soft" @click="openAsk()">
+        <Icon name="sparkles" :size="13" />
+        <span>Co-Pilot</span>
+      </button>
+
+      <button type="button" class="rkz-btn" @click="exportSelection">
+        <Icon name="download" :size="13" />
+        <span>Export</span>
+      </button>
+
+      <ConfirmButton
+        label="Delete"
+        confirm-label="Confirm?"
+        :compact="true"
+        @confirm="bulkDelete"
       />
-      <button @click="doMove" :style="{ fontSize: '11px', fontWeight: 700, color: '#C8C8C8', backgroundColor: 'transparent', border: '1px solid #2C2C2C', borderRadius: '6px', padding: '5px 12px', cursor: 'pointer' }">Move</button>
 
-      <button @click="doCopy" :style="{ fontSize: '11px', fontWeight: 700, color: copied ? '#8AE28A' : '#C8C8C8', backgroundColor: 'transparent', border: '1px solid #2C2C2C', borderRadius: '6px', padding: '5px 12px', cursor: 'pointer' }">{{ copied ? 'Copied ✓' : 'Copy .mns' }}</button>
-      <button @click="openAsk" :style="{ fontSize: '11px', fontWeight: 700, color: '#22d3ee', backgroundColor: 'transparent', border: '1px solid rgba(8,145,178,0.4)', borderRadius: '6px', padding: '5px 12px', cursor: 'pointer' }">✦ Ask AI</button>
-      <button @click="exportSelection" :style="{ fontSize: '11px', fontWeight: 700, color: '#C8C8C8', backgroundColor: 'transparent', border: '1px solid #2C2C2C', borderRadius: '6px', padding: '5px 12px', cursor: 'pointer' }">Export .mns</button>
-      <button @click="doDelete" :style="{ fontSize: '11px', fontWeight: 700, color: confirmDel ? '#fecaca' : '#c98a8a', backgroundColor: confirmDel ? '#7f1d1d' : 'transparent', border: confirmDel ? '1px solid #ef4444' : '1px solid #2C2C2C', borderRadius: '6px', padding: '5px 12px', cursor: 'pointer' }">{{ confirmDel ? 'Confirm delete?' : '🗑 Delete' }}</button>
-      <button @click="clearSelected" title="Clear selection" :style="{ fontSize: '12px', color: '#666', backgroundColor: 'transparent', border: 'none', cursor: 'pointer', padding: '4px' }">✕</button>
+      <button
+        type="button"
+        class="close-btn"
+        title="Clear selection (Esc)"
+        aria-label="Clear selection"
+        @click="clearSelected"
+      >
+        <Icon name="x" :size="14" />
+      </button>
     </div>
   </Teleport>
 </template>
+
+<style scoped>
+.bulk-bar {
+  position: fixed;
+  left: 50%;
+  bottom: 36px;
+  transform: translateX(-50%);
+  z-index: 1500;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  max-width: 94vw;
+  padding: 8px 10px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-strong);
+  background-color: var(--bg-overlay);
+  box-shadow: var(--shadow-lg);
+}
+
+.bulk-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.bulk-sep {
+  width: 1px;
+  height: 18px;
+  background-color: var(--border-default);
+}
+
+.bulk-move {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.move-input {
+  width: 196px;
+  height: 30px;
+  padding: 0 8px;
+  font-size: 11.5px;
+}
+
+.close-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.close-btn:hover {
+  background-color: var(--bg-hover);
+  color: var(--text-primary);
+}
+</style>

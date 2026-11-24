@@ -1,27 +1,136 @@
-/* ========== DESIGN TOKENS ==========
-   Every color the UI uses lives here as a CSS variable so a future
-   theme (light mode) is a token swap, not a per-component hunt.
-   Components must reference var(--*) instead of hardcoded hex. */
-:root {
-  --accent: #00e5ff;
+/* ========== RAKZ DESIGN TOKENS ==========
+   Single source of truth for Precision Study Dark (default) and Warm Editorial
+   Paper-and-Ink Light. Components consume var(--*) exclusively — zero raw hex.
+   Palette derives directly from RAKZ's emblem: archival paper, deep ink,
+   scholarly cobalt (primary action/focus), and terracotta (cross-subject bridges). */
 
-  --bg-root: #09090b;
-  --bg-panel: #0d0d11;
-  --bg-raised: #141419;
-  --bg-hover: #1a1a21;
-  --bg-overlay: #101014f2;
+:root,
+:root[data-theme="dark"] {
+  color-scheme: dark;
 
-  --border-dim: #26262e;
-  --border-mid: #33333d;
+  /* Surfaces */
+  --bg-root: #111214;
+  --bg-sidebar: #151619;
+  --bg-panel: #16171b;
+  --bg-surface: #1b1d22;
+  --bg-input: #131418;
+  --bg-hover: #22252c;
+  --bg-active: #272b35;
+  --bg-overlay: #1a1c21;
+  --backdrop: rgba(7, 8, 10, 0.66);
 
-  --text-hi: #f4f4f5;
-  --text-mid: #a1a1aa;
-  --text-low: #6b6b76;
+  /* Hairlines */
+  --border-subtle: #23262e;
+  --border-default: #2e323d;
+  --border-strong: #3f4554;
 
-  --danger: #f87171;
-  --ok: #4ade80;
+  /* Ink hierarchy */
+  --text-primary: #eff1f5;
+  --text-secondary: #a6acb9;
+  --text-muted: #6e7485;
 
+  /* Deliberate single primary accent (Scholarly Cobalt) */
+  --accent: #5b82f6;
+  --accent-hover: #7194f8;
+  --accent-subtle: rgba(91, 130, 246, 0.14);
+  --accent-border: rgba(91, 130, 246, 0.42);
+  --accent-fg: #ffffff;
+
+  /* Structural cross-subject bridge signal (Warm Terracotta) */
+  --bridge: #e07a5f;
+  --bridge-subtle: rgba(224, 122, 95, 0.14);
+  --bridge-border: rgba(224, 122, 95, 0.42);
+
+  /* Semantic states */
+  --ok: #3fb97a;
+  --ok-subtle: rgba(63, 185, 122, 0.13);
+  --ok-border: rgba(63, 185, 122, 0.38);
+
+  --warn: #dfa03b;
+  --warn-subtle: rgba(223, 160, 59, 0.14);
+  --warn-border: rgba(223, 160, 59, 0.4);
+
+  --danger: #e05d5d;
+  --danger-subtle: rgba(224, 93, 93, 0.14);
+  --danger-border: rgba(224, 93, 93, 0.45);
+  --danger-solid: #b83232;
+  --danger-fg: #fff5f5;
+
+  --star: #e5a93b;
+
+  /* Elevation */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.32);
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.42);
+  --shadow-lg: 0 18px 48px rgba(0, 0, 0, 0.56);
+
+  /* Geometry & motion */
+  --radius-xs: 4px;
   --radius-sm: 6px;
-  --radius-md: 10px;
-  --radius-lg: 14px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+
+  --font-sans: "Segoe UI Variable", "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: "Cascadia Mono", "JetBrains Mono", "Consolas", ui-monospace, monospace;
+
+  --ease-fast: 140ms cubic-bezier(0.2, 0, 0, 1);
+  --focus-ring: 0 0 0 2px var(--bg-root), 0 0 0 4px var(--accent);
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  /* Warm Editorial Paper-and-Ink Surfaces */
+  --bg-root: #f5f2ea;
+  --bg-sidebar: #ece8dc;
+  --bg-panel: #efece2;
+  --bg-surface: #fcfbf7;
+  --bg-input: #f3f0e7;
+  --bg-hover: #e5e0d3;
+  --bg-active: #dfd9c9;
+  --bg-overlay: #fcfbf7;
+  --backdrop: rgba(24, 22, 18, 0.42);
+
+  /* Hairlines */
+  --border-subtle: #ddd7c9;
+  --border-default: #cfc7b5;
+  --border-strong: #b5ab96;
+
+  /* Ink hierarchy */
+  --text-primary: #1a1916;
+  --text-secondary: #545047;
+  --text-muted: #827c70;
+
+  /* Scholarly Ink Cobalt */
+  --accent: #3358d4;
+  --accent-hover: #2849ba;
+  --accent-subtle: rgba(51, 88, 212, 0.1);
+  --accent-border: rgba(51, 88, 212, 0.34);
+  --accent-fg: #ffffff;
+
+  /* Warm Terracotta Bridge */
+  --bridge: #c45335;
+  --bridge-subtle: rgba(196, 83, 53, 0.1);
+  --bridge-border: rgba(196, 83, 53, 0.36);
+
+  /* Semantic states */
+  --ok: #237a4b;
+  --ok-subtle: rgba(35, 122, 75, 0.11);
+  --ok-border: rgba(35, 122, 75, 0.34);
+
+  --warn: #a96b12;
+  --warn-subtle: rgba(169, 107, 18, 0.12);
+  --warn-border: rgba(169, 107, 18, 0.35);
+
+  --danger: #c03232;
+  --danger-subtle: rgba(192, 50, 50, 0.1);
+  --danger-border: rgba(192, 50, 50, 0.38);
+  --danger-solid: #b82a2a;
+  --danger-fg: #ffffff;
+
+  --star: #c98a1b;
+
+  /* Subtle tactile elevation */
+  --shadow-sm: 0 1px 2px rgba(26, 25, 22, 0.06);
+  --shadow-md: 0 8px 24px rgba(26, 25, 22, 0.1);
+  --shadow-lg: 0 18px 48px rgba(26, 25, 22, 0.16);
 }

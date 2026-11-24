@@ -1,39 +1,20 @@
 <script setup lang="ts">
-// ========== 1. IMPORTS ==========
+// Precision 1px hairline panel splitter inside a comfortable 6px pointer target.
 import { ref } from "vue";
-import { mix } from "@/lib/utils";
 
-// ========== 2. TYPES ==========
-// (props declared via runtime declaration below)
-
-// ========== 3. CONSTANTS ==========
-// (none)
-
-// ========== 4. STATE ==========
-const active = ref(false);
-const hover = ref(false);
-
-// ========== 5. LOGIC ==========
-const props = defineProps({
-  scale: { type: Number, default: 1 },   // stage scale so drag deltas map 1:1 to layout px
-});
+const props = withDefaults(defineProps<{ scale?: number }>(), { scale: 1 });
 const emit = defineEmits<{ resize: [delta: number] }>();
 
-// ----- onDown -----
-// purpose:   start a panel-resize drag — emit deltas in layout px until mouseup
-// io:        in → e (MouseEvent) | out → none
-// processes: none                                                        [auto]
+const active = ref(false);
+
 function onDown(e: MouseEvent): void {
-  // 1. arm the drag and remember the previous x
   e.preventDefault();
   active.value = true;
   let prev = e.clientX;
-  // 2. every move emits the delta (scaled), every position updates the baseline
   const mm = (ev: MouseEvent) => {
     emit("resize", (ev.clientX - prev) / props.scale);
     prev = ev.clientX;
   };
-  // 3. mouseup ends the drag and detaches the listeners
   const mu = () => {
     active.value = false;
     window.removeEventListener("mousemove", mm);
@@ -46,22 +27,40 @@ function onDown(e: MouseEvent): void {
 
 <template>
   <div
+    class="resizer"
+    :class="{ 'is-active': active }"
+    role="separator"
+    aria-orientation="vertical"
     @mousedown="onDown"
-    @mouseenter="hover = true"
-    @mouseleave="hover = false"
-    :style="{
-      width: '8px', minWidth: '8px', height: '100%', cursor: 'col-resize', flexShrink: 0,
-      backgroundColor: active ? mix(40) : hover ? mix(20) : '#161618',
-      transition: 'background-color 0.15s', display: 'flex', alignItems: 'center', justifyContent: 'center',
-    }"
   >
-    <div
-      :style="{
-        width: '4px', height: '46px', borderRadius: '3px', pointerEvents: 'none',
-        backgroundColor: (active || hover) ? 'var(--accent)' : '#6A6A72',
-        boxShadow: (active || hover) ? `0 0 10px ${mix(80)}` : '0 0 0 1px rgba(0,0,0,0.3)',
-        transition: 'all 0.15s',
-      }"
-    />
+    <div class="resizer-line" />
   </div>
 </template>
+
+<style scoped>
+.resizer {
+  position: relative;
+  width: 5px;
+  height: 100%;
+  flex-shrink: 0;
+  cursor: col-resize;
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  margin: 0 -2px;
+  z-index: 10;
+}
+
+.resizer-line {
+  width: 1px;
+  height: 100%;
+  background-color: var(--border-subtle);
+  transition: background-color var(--ease-fast), width var(--ease-fast);
+}
+
+.resizer:hover .resizer-line,
+.resizer.is-active .resizer-line {
+  width: 2px;
+  background-color: var(--accent);
+}
+</style>
