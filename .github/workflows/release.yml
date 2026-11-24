@@ -73,7 +73,7 @@ jobs:
 
   build-macos:
     name: Build macOS (Universal — Apple Silicon & Intel)
-    runs-on: macos-14
+    runs-on: macos-latest
     permissions:
       contents: read
 
